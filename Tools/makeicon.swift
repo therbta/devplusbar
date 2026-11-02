@@ -1,12 +1,12 @@
 #!/usr/bin/env swift
 //
-// GHBar uygulama ikonunu uretir.
+// Dev+ Bar uygulama ikonunu uretir.
 //
 // Harici bir cizim araci yerine AppKit kullaniliyor: makinede zaten var,
 // her boyut tam kontrolle ciziliyor ve sonuc dogrudan .iconset klasoru.
 //
-//   swift Tools/makeicon.swift  ->  build/GHBar.iconset
-//   iconutil -c icns build/GHBar.iconset -o Resources/GHBar.icns
+//   swift Tools/makeicon.swift  ->  build/Dev+ Bar.iconset
+//   iconutil -c icns build/Dev+ Bar.iconset -o Resources/Dev+ Bar.icns
 //
 import AppKit
 
@@ -125,7 +125,7 @@ func png(_ image: NSImage, _ pixels: Int) -> Data {
 
 let outputDirectory = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
-    : "build/GHBar.iconset"
+    : "build/Dev+ Bar.iconset"
 
 try? FileManager.default.createDirectory(
     atPath: outputDirectory, withIntermediateDirectories: true

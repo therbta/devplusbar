@@ -19,7 +19,7 @@ glow.draw(fromCenter: NSPoint(x: W*0.82, y: H*0.85), radius: 0,
           toCenter: NSPoint(x: W*0.82, y: H*0.85), radius: 620, options: [])
 
 // Ikon (buyuk boy iconset'ten)
-if let icon = NSImage(contentsOfFile: "build/GHBar.iconset/icon_512x512.png") {
+if let icon = NSImage(contentsOfFile: "build/Dev+ Bar.iconset/icon_512x512.png") {
     icon.draw(in: NSRect(x: 96, y: H-96-176, width: 176, height: 176))
 }
 
@@ -33,12 +33,12 @@ func draw(_ text: String, size: CGFloat, weight: NSFont.Weight, color: NSColor, 
     NSAttributedString(string: text, attributes: attrs)
         .draw(at: NSPoint(x: 96, y: y))
 }
-draw("GHBar", size: 96, weight: .bold, color: .white, y: 236)
+draw("Dev+ Bar", size: 96, weight: .bold, color: .white, y: 236)
 draw("Pull requests and issues", size: 46, weight: .medium,
      color: NSColor(srgbRed: 0.93, green: 0.95, blue: 0.96, alpha: 1), y: 152)
 draw("in your macOS menu bar.", size: 46, weight: .medium,
      color: NSColor(srgbRed: 0.93, green: 0.95, blue: 0.96, alpha: 1), y: 96)
-draw("Free · Open source · ghbar.cobanov.dev", size: 26, weight: .regular,
+draw("Free · Open source · devplusbar.pages.dev", size: 26, weight: .regular,
      color: NSColor(srgbRed: 0.42, green: 0.75, blue: 0.53, alpha: 1), y: 34)
 
 NSGraphicsContext.restoreGraphicsState()
