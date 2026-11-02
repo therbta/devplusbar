@@ -13,7 +13,8 @@
 #   make clean
 
 VERSION     := 0.3.3
-APP         := Dev+ Bar
+APP         := DevPlusBar
+APP_DISPLAY := Dev+ Bar
 TARGET      := DevPlusBar
 BUNDLE_ID   := run.therbta.devplusbar
 MIN_MACOS   := 14.0
@@ -76,8 +77,8 @@ bundle: build $(ICNS)
 	@# Iki cagri: bu macOS'taki PlistBuddy 13'ten fazla -c komutuyla
 	@# SIGABRT atiyor (olculdu: 13 ok, 14+ Abort trap 6).
 	@/usr/libexec/PlistBuddy -c "Clear dict" \
-	  -c "Add :CFBundleName string $(APP)" \
-	  -c "Add :CFBundleDisplayName string $(APP)" \
+	  -c "Add :CFBundleName string $(APP_DISPLAY)" \
+	  -c "Add :CFBundleDisplayName string $(APP_DISPLAY)" \
 	  -c "Add :CFBundleIdentifier string $(BUNDLE_ID)" \
 	  -c "Add :CFBundleExecutable string $(APP)" \
 	  -c "Add :CFBundleIconFile string $(APP)" \
@@ -150,7 +151,7 @@ publish:
 	  || { echo "HATA: paket Gatekeeper'dan gecmiyor, yayinlanmayacak"; exit 1; }
 	cp $(ZIP) $(LATEST_ZIP)
 	gh release create v$(VERSION) $(ZIP) $(LATEST_ZIP) \
-	  --title "Dev+ Bar $(VERSION)" \
+	  --title "$(APP_DISPLAY) $(VERSION)" \
 	  --notes-file docs/release-notes/v$(VERSION).md \
 	  --repo therbta/devplusbar
 	$(MAKE) tap
@@ -158,6 +159,7 @@ publish:
 # Homebrew cask'ini yeni surum + sha256 ile tap'e gonderir. Ayri clone yok:
 # gh api ile tek dosya PUT ediliyor.
 tap:
+	@test -f $(ZIP) || { echo "$(ZIP) yok — once 'make release' veya 'make zip' calistir"; exit 1; }
 	@SHA=$$(shasum -a 256 $(ZIP) | cut -d' ' -f1); \
 	sed -e "s/{{VERSION}}/$(VERSION)/g" -e "s/{{SHA256}}/$$SHA/g" \
 	  Packaging/devplusbar.rb.template > $(BUILD_DIR)/devplusbar.rb; \
@@ -224,8 +226,8 @@ bundle-mas: build-mas $(ICNS)
 	@printf '%s' 'APPL????' > $(MAS_CONTENTS)/PkgInfo
 	@# PlistBuddy 13-komut siniri: iki cagri (bundle hedefindeki notla ayni).
 	@/usr/libexec/PlistBuddy -c "Clear dict" \
-	  -c "Add :CFBundleName string $(APP)" \
-	  -c "Add :CFBundleDisplayName string $(APP)" \
+	  -c "Add :CFBundleName string $(APP_DISPLAY)" \
+	  -c "Add :CFBundleDisplayName string $(APP_DISPLAY)" \
 	  -c "Add :CFBundleIdentifier string $(BUNDLE_ID)" \
 	  -c "Add :CFBundleExecutable string $(APP)" \
 	  -c "Add :CFBundleIconFile string $(APP)" \

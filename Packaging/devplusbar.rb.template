@@ -2,14 +2,14 @@ cask "devplusbar" do
   version "{{VERSION}}"
   sha256 "{{SHA256}}"
 
-  url "https://github.com/therbta/devplusbar/releases/download/v#{version}/Dev+ Bar-#{version}-macos.zip"
+  url "https://github.com/therbta/devplusbar/releases/download/v#{version}/DevPlusBar-#{version}-macos.zip"
   name "Dev+ Bar"
   desc "Pull requests and issues from your repositories, in the menu bar"
   homepage "https://devplusbar.pages.dev"
 
   depends_on macos: :sonoma
 
-  app "Dev+ Bar.app"
+  app "DevPlusBar.app"
 
   zap trash: [
     "~/Library/Application Support/Dev+ Bar",
