@@ -21,9 +21,8 @@ enum PanelPreview {
         let deadline = Date().addingTimeInterval(4)
         while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
         view.layoutSubtreeIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        guard let png = view.pngData() else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path))
     }
 
     /// The panel in its arrow frame, filled with sample pull requests and issues. The authors
@@ -35,49 +34,64 @@ enum PanelPreview {
                   by author: String, bot: Bool = false, draft: Bool = false,
                   review: ReviewDecision? = nil, checks: CheckState? = nil, comments: Int = 0,
                   merge: MergeBlock? = nil) -> Item {
-            Item(kind: kind, repository: repo.contains("/") ? repo : "therbta/\(repo)", number: number, title: title,
-                 url: "https://github.com/\(repo.contains("/") ? repo : "therbta/" + repo)/\(kind == .issue ? "issues" : "pull")/\(number)",
+            Item(kind: kind, repository: repo.contains("/") ? repo : "acme/\(repo)", number: number, title: title,
+                 url: "https://github.com/\(repo.contains("/") ? repo : "acme/" + repo)/\(kind == .issue ? "issues" : "pull")/\(number)",
                  createdAt: now.addingTimeInterval(-hours * 3600), isDraft: draft,
                  authorLogin: author, authorIsBot: bot, updatedAt: now.addingTimeInterval(-hours * 3600),
                  reviewDecision: review, checks: checks, comments: comments, merge: merge)
         }
         let prs: [Row] = [
-            .item(item(.pullRequest, "herdrchat", 55, "Let the last row scroll clear of the composer", hours: 2, by: "lena-k")),
-            .item(item(.pullRequest, "dev-plus-bar", 12, "Add keyboard navigation to the menu", hours: 5, by: "tomasz")),
-            .item(item(.pullRequest, "teslamate-mcp", 9, "Bump actions/checkout from 4 to 5", hours: 20, by: "dependabot", bot: true)),
-            .item(item(.pullRequest, "instagram", 3, "fix: cache-control headers on the media proxy", hours: 30, by: "ayse-dev", draft: true)),
-            .group(repository: "therbta/paul-graham-turkce", items: (1...6).map {
-                item(.pullRequest, "paul-graham-turkce", 40 + $0, "Çeviri: essay \($0)", hours: Double(50 + $0), by: "lena-k")
+            .item(item(.pullRequest, "storefront", 214, "Keep the cart open after a failed payment", hours: 2, by: "lena-k",
+                       checks: .passing, comments: 3)),
+            .item(item(.pullRequest, "orders-api", 88, "Retry refund webhooks with backoff", hours: 5, by: "tomasz",
+                       checks: .pending)),
+            .item(item(.pullRequest, "mobile", 131, "Bump expo from 52 to 53", hours: 20, by: "dependabot", bot: true)),
+            .item(item(.pullRequest, "docs", 57, "Explain partial refunds", hours: 30, by: "ayse-dev", draft: true)),
+            .group(repository: "acme/design-system", items: (1...6).map {
+                item(.pullRequest, "design-system", 300 + $0, "Tokens: spacing scale \($0)", hours: Double(50 + $0), by: "lena-k")
             }),
         ]
-        let seen: Set<String> = ["https://github.com/therbta/instagram/pull/3",
-                                 "https://github.com/therbta/teslamate-mcp/pull/9"]
+        let seen: Set<String> = ["https://github.com/acme/docs/pull/57",
+                                 "https://github.com/acme/mobile/pull/131"]
         let sections = [
             MenuSection(kind: .reviewRequested, rows: [
-                .item(item(.pullRequest, "atkctl", 4, "Support the VXE R1 receiver", hours: 4, by: "tomasz")),
+                .item(item(.pullRequest, "orders-api", 90, "Move tax rules into one table", hours: 4, by: "tomasz")),
             ], truncated: false),
             MenuSection(kind: .pullRequests, rows: prs, truncated: false),
             MenuSection(kind: .myPullRequests, rows: [
-                .item(item(.pullRequest, "devplusbar", 1, "Dev+ Bar rebrand and slug migration", hours: 1, by: "therbta", checks: .passing, comments: 2, merge: .conflicts)),
-                .item(item(.pullRequest, "thebt.dev", 1, "Add /room: a 3D Vermont cabin experiment", hours: 400, by: "therbta", draft: true)),
-                .item(item(.pullRequest, "atkctl", 7, "Retry the receiver handshake", hours: 26, by: "therbta", review: .approved, checks: .passing, merge: .behind)),
-                .item(item(.pullRequest, "herdrchat", 61, "Move auth to the edge worker", hours: 8, by: "therbta", review: .changesRequested, checks: .failing, comments: 5)),
-                .item(item(.pullRequest, "react-native-elements/react-native-elements", 4013, "feat: add testID props to SpeedDial.Action", hours: 7000, by: "therbta")),
+                .item(item(.pullRequest, "storefront", 209, "Lazy-load product images", hours: 1, by: "samrivera", checks: .passing, comments: 2, merge: .conflicts)),
+                .item(item(.pullRequest, "orders-api", 85, "Idempotency keys for refunds", hours: 26, by: "samrivera", review: .approved, checks: .passing, merge: .behind)),
+                .item(item(.pullRequest, "mobile", 127, "Offline cart", hours: 8, by: "samrivera", review: .changesRequested, checks: .failing, comments: 5)),
+                .item(item(.pullRequest, "docs", 50, "Draft: API changelog page", hours: 400, by: "samrivera", draft: true)),
             ], truncated: false),
             MenuSection(kind: .issues, rows: [
-                .item(item(.issue, "teslamate-mcp", 8, "Optional sponsored field in the trip summary", hours: 72, by: "ayse-dev")),
+                .item(item(.issue, "storefront", 220, "Apple Pay button missing on Safari 18", hours: 72, by: "ayse-dev")),
             ], truncated: false),
         ]
         let model = PanelModel()
         model.tab = tab
         model.input = PanelInput(
-            viewer: Viewer(login: "therbta", name: "Mert Cobanov", avatarURL: ""),
-            social: Social(stars: 2021, followers: 2611, following: 74, starsAreExact: true),
+            viewer: Viewer(login: "samrivera", name: "Sam Rivera", avatarURL: ""),
+            social: Social(stars: 412, followers: 186, following: 53, starsAreExact: true),
             sections: sections, rateLimit: nil, errors: [], lastRefresh: now, auth: .signedIn(.oauth),
             showOwner: false, visibleSections: Set(SectionKind.allCases),
             isSeen: { seen.contains($0) }, now: now)
 
         return ArrowPanelContainer(position: { let p = ArrowPosition(); p.x = 300; return p }(),
                                    style: style, content: AnyView(PanelView(model: model)))
+    }
+}
+
+extension NSView {
+    /// A PNG of the view at `scale` pixels per point, so sample renders stay sharp on Retina.
+    func pngData(scale: CGFloat = 2) -> Data? {
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(bounds.width * scale), pixelsHigh: Int(bounds.height * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        guard let rep else { return nil }
+        rep.size = bounds.size
+        cacheDisplay(in: bounds, to: rep)
+        return rep.representation(using: .png, properties: [:])
     }
 }

@@ -53,6 +53,12 @@ final class AIMonitor: ObservableObject {
         limits = limits.learning(from: fresh.claudeHits, records: fresh.records)
     }
 
+    /// For sample renders: made-up usage against made-up limits, leaving the saved ones alone.
+    func load(_ fresh: UsageSnapshot, limits sample: ClaudeLimits) {
+        snapshot = fresh
+        limits = sample
+    }
+
     /// Sets the cap so this week reads as the percentage claude.ai shows.
     func match(officialPercent percent: Int) {
         let now = Date()

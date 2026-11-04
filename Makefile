@@ -174,8 +174,8 @@ release-policy-check:
 	  echo "ERROR: Makefile fallback wording missing"; \
 	  exit 1; \
 	}
-	@grep -q "Do not use fallback flags as default release policy" README.md || { \
-	  echo "ERROR: README.md fallback policy warning missing"; \
+	@grep -q "Do not use fallback flags as default release policy" docs/RELEASING.md || { \
+	  echo "ERROR: docs/RELEASING.md fallback policy warning missing"; \
 	  exit 1; \
 	}
 	@echo "PASS: release policy docs are strict by default"

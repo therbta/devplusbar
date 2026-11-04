@@ -1051,7 +1051,8 @@ struct ViewerAvatar: View {
     let viewer: Viewer?
 
     var body: some View {
-        if let image = Avatar.cached(size: 68) {
+        // Sample renders run offline and must not show the signed-in user's own picture.
+        if !AuthorAvatars.offline, let image = Avatar.cached(size: 68) {
             Image(nsImage: image).resizable()
         } else if let login = viewer?.login {
             AuthorAvatar(login: login, isBot: false)
