@@ -1,0 +1,5 @@
+[
+ {"id":"4dac315d-baa0-4b7a-b81f-1cce8aefb50f","version":793,"status":"succeeded","description":"Set FCM_SERVICE_ACCOUNT_JSON config vars","created_at":"2026-11-02T02:00:58Z","updated_at":"2026-11-02T02:01:25Z","current":true,"slug":{"id":"da82d3b0-eaac-4672-9777-7384cb466d8c"},"user":{"email":"dev@example.com","id":"44412f71-7b10-4658-a427-24affce6cd1b"}},
+ {"id":"b18cf250-cb56-49ee-a634-47f547782e2e","version":792,"status":"succeeded","description":"Deploy dfef9365","created_at":"2026-10-31T23:58:27Z","updated_at":"2026-10-31T23:58:52Z","current":false,"slug":{"id":"da82d3b0-eaac-4672-9777-7384cb466d8c"},"user":{"email":"dev@example.com","id":"44412f71-7b10-4658-a427-24affce6cd1b"}},
+ {"id":"497de71b-73b3-4e63-929b-b0ea5082ed81","version":791,"status":"succeeded","description":"Deploy 4004bfca","created_at":"2026-10-31T23:30:14Z","updated_at":"2026-10-31T23:30:39Z","current":false,"slug":{"id":"104b12cb-86aa-4ea5-a426-8eaccc39086e"},"user":{"email":"dev@example.com","id":"44412f71-7b10-4658-a427-24affce6cd1b"}}
+]

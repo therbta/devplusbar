@@ -9,6 +9,7 @@ enum Filtering {
             .pullRequests: snapshot.prs,
             .issues: snapshot.issues,
             .myPullRequests: snapshot.myPullRequests,
+            .mentions: snapshot.mentions,
         ]
 
         // Ayni PR birden fazla aramada cikabilir; onceligi `displayOrder`
@@ -42,7 +43,7 @@ enum Filtering {
         items
             .filter { settings.showBots || !$0.authorIsBot }
             .filter { settings.showDrafts || !$0.isDraft }
-            .sorted { $0.createdAt > $1.createdAt }
+            .sorted { $0.lastActivity > $1.lastActivity }
     }
 
     /// Tek bir repo bir bolumu bogdugunda kullanicinin ilk icgudusu onu tamamen

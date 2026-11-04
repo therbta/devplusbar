@@ -8,11 +8,11 @@ import Security
 enum Keychain {
 
     static let defaultService = "run.therbta.devplusbar"
-    private static let account = "github-token"
+    static let githubAccount = "github-token"
 
     /// Replaces the stored token. Updates in place, so a failed write leaves the old one.
     @discardableResult
-    static func save(token: String, service: String = defaultService) -> Bool {
+    static func save(token: String, service: String = defaultService, account: String = githubAccount) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -31,7 +31,7 @@ enum Keychain {
         return status == errSecSuccess
     }
 
-    static func token(service: String = defaultService) -> String? {
+    static func token(service: String = defaultService, account: String = githubAccount) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -45,7 +45,7 @@ enum Keychain {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func delete(service: String = defaultService) {
+    static func delete(service: String = defaultService, account: String = githubAccount) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

@@ -11,7 +11,7 @@ struct SettingsStoreTests {
         Defaults.reset(.accounts, .organizations, .knownOrganizations,
                        .repoList, .repoListIsAllowList,
                        .showBots, .showDrafts, .showPullRequests, .showIssues,
-                       .showReviewRequested, .showChangesRequested, .showMyPullRequests,
+                       .showReviewRequested, .showChangesRequested, .showMyPullRequests, .showMentions,
                        .showEmptySections, .rateLimitVisibility,
                        .refreshMinutes,
                        .repoGroupThreshold, .notificationsEnabled)
@@ -36,6 +36,7 @@ struct SettingsStoreTests {
         Defaults[.showReviewRequested] = false
         Defaults[.showChangesRequested] = false
         Defaults[.showMyPullRequests] = false
+        Defaults[.showMentions] = false
         Defaults[.showEmptySections] = true
         Defaults[.rateLimitVisibility] = RateLimitVisibility.always.rawValue
         Defaults[.repoGroupThreshold] = 10

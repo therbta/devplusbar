@@ -12,12 +12,17 @@
 #   make test       testler
 #   make clean
 
-VERSION     := 0.3.3
+VERSION     := 0.4.0
 APP         := DevPlusBar
 APP_DISPLAY := Dev+ Bar
 TARGET      := DevPlusBar
 BUNDLE_ID   := run.therbta.devplusbar
 MIN_MACOS   := 14.0
+# Release policy:
+# - Default (strict): make release && make publish
+# - Emergency only (not notarized): make release SKIP_NOTARIZE=1 && make publish ALLOW_UNNOTARIZED_PUBLISH=1
+SKIP_NOTARIZE ?= 0
+ALLOW_UNNOTARIZED_PUBLISH ?= 0
 
 BUILD_DIR   := build
 APP_BUNDLE  := $(BUILD_DIR)/$(APP).app
@@ -28,7 +33,7 @@ ICNS        := $(BUILD_DIR)/$(APP).icns
 ZIP         := $(BUILD_DIR)/$(APP)-$(VERSION)-macos.zip
 
 # Imzalama kimligi. security find-identity -v -p codesigning ile listelenir.
-SIGN_ID     := Developer ID Application: AHMET MERT COBANOGLU (6U58AKY6F8)
+SIGN_ID     := Developer ID Application: VERMONT EMPLOYMENT AGENCY LLC (Y95SC97WTW)
 # xcrun notarytool store-credentials ile kaydedilen profil adi.
 NOTARY_PROFILE := devplusbar
 # Ya da App Store Connect API anahtari: make notarize NOTARY_KEY_ID=... NOTARY_ISSUER=...
@@ -39,7 +44,7 @@ NOTARY_AUTH = $(if $(NOTARY_KEY_ID),--key "$(HOME)/.appstoreconnect/private_keys
 # install.sh surumden bagimsiz bu adi indirir (releases/latest/download/...).
 LATEST_ZIP  := $(BUILD_DIR)/$(APP)-macos.zip
 
-.PHONY: all build test icon bundle sign notarize zip release install clean run publish tap site check build-mas bundle-mas sign-mas pkg
+.PHONY: all build test icon bundle sign notarize zip release install clean run publish tap site check build-mas bundle-mas sign-mas pkg preflight-release release-policy-check
 
 all: build
 
@@ -105,7 +110,11 @@ bundle: build $(ICNS)
 # eski imzalar gecerli kalir.
 
 sign: bundle
-	@security unlock-keychain -p "$$(cat $(HOME)/.therbta-signing/.kcpass)" $(SIGN_KEYCHAIN)
+	@if [ -f "$(SIGN_KCPASS)" ]; then \
+	  security unlock-keychain -p "$$(cat $(SIGN_KCPASS))" "$(SIGN_KEYCHAIN)"; \
+	else \
+	  echo "UYARI: $(SIGN_KCPASS) yok; acik keychain ile devam ediliyor"; \
+	fi
 	codesign --force --options runtime --timestamp \
 	  --keychain "$(SIGN_KEYCHAIN)" --sign "$(SIGN_ID)" \
 	  $(CONTENTS)/MacOS/$(APP)
@@ -133,7 +142,53 @@ zip:
 	@echo "arsiv: $(ZIP)"
 	@shasum -a 256 $(ZIP)
 
-release: test notarize
+preflight-release:
+	@echo "--- release preflight ---"
+	@security find-identity -v -p codesigning | grep -F "$(SIGN_ID)" >/dev/null 2>&1 || { \
+	  echo "ERROR: signing identity yok: $(SIGN_ID)"; \
+	  exit 1; \
+	}
+	@if [ -z "$(NOTARY_KEY_ID)" ] && [ -z "$(NOTARY_ISSUER)" ]; then \
+	  xcrun notarytool history --keychain-profile "$(NOTARY_PROFILE)" >/dev/null 2>&1 || { \
+	    echo "ERROR: notary profile yok: $(NOTARY_PROFILE)"; \
+	    exit 1; \
+	  }; \
+	else \
+	  test -n "$(NOTARY_KEY_ID)" && test -n "$(NOTARY_ISSUER)" || { \
+	    echo "ERROR: NOTARY_KEY_ID ve NOTARY_ISSUER birlikte ayarlanmalidir"; \
+	    exit 1; \
+	  }; \
+	  test -f "$(HOME)/.appstoreconnect/private_keys/AuthKey_$(NOTARY_KEY_ID).p8" || { \
+	    echo "ERROR: App Store Connect key yok: $(HOME)/.appstoreconnect/private_keys/AuthKey_$(NOTARY_KEY_ID).p8"; \
+	    exit 1; \
+	  }; \
+	fi
+	@echo "PASS: release preflight ok"
+
+release-policy-check:
+	@grep -q "Default (strict): make release && make publish" Makefile || { \
+	  echo "ERROR: Makefile strict-default release wording missing"; \
+	  exit 1; \
+	}
+	@grep -q "Emergency only (not notarized): make release SKIP_NOTARIZE=1 && make publish ALLOW_UNNOTARIZED_PUBLISH=1" Makefile || { \
+	  echo "ERROR: Makefile fallback wording missing"; \
+	  exit 1; \
+	}
+	@grep -q "Do not use fallback flags as default release policy" README.md || { \
+	  echo "ERROR: README.md fallback policy warning missing"; \
+	  exit 1; \
+	}
+	@echo "PASS: release policy docs are strict by default"
+
+release: test
+	@if [ "$(SKIP_NOTARIZE)" = "1" ]; then \
+	  echo "UYARI: notarize atlandi (SKIP_NOTARIZE=1)"; \
+	  $(MAKE) sign; \
+	  $(MAKE) zip; \
+	else \
+	  $(MAKE) preflight-release; \
+	  $(MAKE) notarize; \
+	fi
 	@echo
 	@echo "yayina hazir: $(ZIP)"
 	@shasum -a 256 $(ZIP)
@@ -146,9 +201,13 @@ release: test notarize
 
 publish:
 	@test -f $(ZIP) || { echo "$(ZIP) yok — once 'make notarize' calistir"; exit 1; }
-	@echo "--- noterleme dogrulamasi ---"
-	@spctl --assess --type execute --verbose=4 $(APP_BUNDLE) 2>&1 | grep -q accepted \
-	  || { echo "HATA: paket Gatekeeper'dan gecmiyor, yayinlanmayacak"; exit 1; }
+	@if [ "$(ALLOW_UNNOTARIZED_PUBLISH)" = "1" ]; then \
+	  echo "UYARI: Gatekeeper dogrulamasi atlandi (ALLOW_UNNOTARIZED_PUBLISH=1)"; \
+	else \
+	  echo "--- noterleme dogrulamasi ---"; \
+	  spctl --assess --type execute --verbose=4 $(APP_BUNDLE) 2>&1 | grep -q accepted \
+	    || { echo "HATA: paket Gatekeeper'dan gecmiyor, yayinlanmayacak"; exit 1; }; \
+	fi
 	cp $(ZIP) $(LATEST_ZIP)
 	gh release create v$(VERSION) $(ZIP) $(LATEST_ZIP) \
 	  --title "$(APP_DISPLAY) $(VERSION)" \
@@ -207,7 +266,8 @@ MAS_PKG_ID    := 3rd Party Mac Developer Installer: AHMET MERT COBANOGLU (6U58AK
 MAS_PROFILE   := Packaging/DevPlusBar_MAS.provisionprofile
 # Tek imza keychain'i (2026-10-16'dan beri, devplusbar-signing silindi). Sifresi
 # ~/.therbta-signing/.kcpass ve Obsidian passwords.md'de.
-SIGN_KEYCHAIN := $(HOME)/Library/Keychains/therbta-signing.keychain-db
+SIGN_KEYCHAIN := $(if $(wildcard $(HOME)/Library/Keychains/therbta-signing.keychain-db),$(HOME)/Library/Keychains/therbta-signing.keychain-db,$(HOME)/Library/Keychains/login.keychain-db)
+SIGN_KCPASS   := $(HOME)/.therbta-signing/.kcpass
 PKG           := $(BUILD_DIR)/$(APP)-$(VERSION)-mas.pkg
 
 # Iki varyanti da derle + testler. Yayin oncesi tek dogrulama kapisi

@@ -35,6 +35,7 @@ struct Settings: Sendable, Equatable {
     var showReviewRequested: Bool = true
     var showChangesRequested: Bool = true
     var showMyPullRequests: Bool = true
+    var showMentions: Bool = true
     /// Bos bolumu basligiyla ve "None" satiriyla goster.
     var showEmptySections: Bool = false
     var repoGroupThreshold: Int = 3
@@ -49,6 +50,7 @@ struct Settings: Sendable, Equatable {
         if showReviewRequested { result.insert(.reviewRequested) }
         if showChangesRequested { result.insert(.changesRequested) }
         if showMyPullRequests { result.insert(.myPullRequests) }
+        if showMentions { result.insert(.mentions) }
         return result
     }
 }

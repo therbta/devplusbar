@@ -162,7 +162,11 @@ final class StatusPanel: NSObject {
         resignObserver = nil
         statusItem.button?.highlight(false)
         panel.orderOut(nil)
+        onClose()
     }
+
+    /// Called each time the panel closes.
+    var onClose: () -> Void = {}
 
     /// Call when the content may have changed size; the panel keeps its top under the menu bar.
     func contentChanged() {

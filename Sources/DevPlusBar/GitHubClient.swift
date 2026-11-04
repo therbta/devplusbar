@@ -62,6 +62,8 @@ struct GitHubClient {
                 "review": queries.review,
                 "changesRequested": queries.changesRequested,
                 "myPullRequests": queries.myPullRequests,
+                "mentions": queries.mentions,
+                "merged": queries.merged,
                 "first": Self.pageSize,
             ],
         ]

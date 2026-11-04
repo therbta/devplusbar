@@ -9,7 +9,8 @@ enum PanelPreview {
                                        arrowHalfWidth: 17, arrowHeight: 9)
 
     static func render(to path: String) {
-        let view = NSHostingView(rootView: sample(tab: .pullRequests))
+        let tab = ProcessInfo.processInfo.environment["PANEL_TAB"].flatMap(SectionKind.init(rawValue:)) ?? .pullRequests
+        let view = NSHostingView(rootView: sample(tab: tab))
         let size = view.fittingSize
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless,
                               backing: .buffered, defer: false)
@@ -31,11 +32,14 @@ enum PanelPreview {
         AuthorAvatars.offline = true
         let now = Date()
         func item(_ kind: ItemKind, _ repo: String, _ number: Int, _ title: String, hours: Double,
-                  by author: String, bot: Bool = false, draft: Bool = false) -> Item {
-            Item(kind: kind, repository: "therbta/\(repo)", number: number, title: title,
-                 url: "https://github.com/therbta/\(repo)/\(kind == .issue ? "issues" : "pull")/\(number)",
+                  by author: String, bot: Bool = false, draft: Bool = false,
+                  review: ReviewDecision? = nil, checks: CheckState? = nil, comments: Int = 0,
+                  merge: MergeBlock? = nil) -> Item {
+            Item(kind: kind, repository: repo.contains("/") ? repo : "therbta/\(repo)", number: number, title: title,
+                 url: "https://github.com/\(repo.contains("/") ? repo : "therbta/" + repo)/\(kind == .issue ? "issues" : "pull")/\(number)",
                  createdAt: now.addingTimeInterval(-hours * 3600), isDraft: draft,
-                 authorLogin: author, authorIsBot: bot)
+                 authorLogin: author, authorIsBot: bot, updatedAt: now.addingTimeInterval(-hours * 3600),
+                 reviewDecision: review, checks: checks, comments: comments, merge: merge)
         }
         let prs: [Row] = [
             .item(item(.pullRequest, "herdrchat", 55, "Let the last row scroll clear of the composer", hours: 2, by: "lena-k")),
@@ -53,6 +57,13 @@ enum PanelPreview {
                 .item(item(.pullRequest, "atkctl", 4, "Support the VXE R1 receiver", hours: 4, by: "tomasz")),
             ], truncated: false),
             MenuSection(kind: .pullRequests, rows: prs, truncated: false),
+            MenuSection(kind: .myPullRequests, rows: [
+                .item(item(.pullRequest, "devplusbar", 1, "Dev+ Bar rebrand and slug migration", hours: 1, by: "therbta", checks: .passing, comments: 2, merge: .conflicts)),
+                .item(item(.pullRequest, "thebt.dev", 1, "Add /room: a 3D Vermont cabin experiment", hours: 400, by: "therbta", draft: true)),
+                .item(item(.pullRequest, "atkctl", 7, "Retry the receiver handshake", hours: 26, by: "therbta", review: .approved, checks: .passing, merge: .behind)),
+                .item(item(.pullRequest, "herdrchat", 61, "Move auth to the edge worker", hours: 8, by: "therbta", review: .changesRequested, checks: .failing, comments: 5)),
+                .item(item(.pullRequest, "react-native-elements/react-native-elements", 4013, "feat: add testID props to SpeedDial.Action", hours: 7000, by: "therbta")),
+            ], truncated: false),
             MenuSection(kind: .issues, rows: [
                 .item(item(.issue, "teslamate-mcp", 8, "Optional sponsored field in the trip summary", hours: 72, by: "ayse-dev")),
             ], truncated: false),

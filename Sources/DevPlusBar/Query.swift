@@ -7,6 +7,8 @@ struct Queries: Sendable, Equatable {
     let review: String
     let changesRequested: String
     let myPullRequests: String
+    var mentions: String = ""
+    var merged: String = ""
     /// Uzunluk tavani yuzunden bazi filtreler dusuruldu.
     let filtersDropped: Bool
     /// Beyaz liste acik ama bos — hicbir sey gosterilmemeli.
@@ -95,6 +97,14 @@ enum Query {
         )
         dropped = dropped || assignedDropped
 
+        // Someone else's thread that names you. Scoped by organization when one is picked; the
+        // repository list still applies.
+        let (mentionParts, mentionDropped) = fit(
+            ["is:open", "mentions:@me", "-author:@me"] + settings.organizations.map { "org:\($0)" },
+            exclusions: exclusions
+        )
+        dropped = dropped || mentionDropped
+
         // Without a sort GitHub returns "best match" first; when a search hits the 100-result
         // limit, newest first is what keeps the recent work in view.
         func sorted(_ query: String) -> String { query + " " + newestFirst }
@@ -106,6 +116,8 @@ enum Query {
             review: sorted(reviewParts.joined(separator: " ")),
             changesRequested: sorted(changesParts.joined(separator: " ")),
             myPullRequests: sorted(mineParts.joined(separator: " ")),
+            mentions: sorted(mentionParts.joined(separator: " ")),
+            merged: "is:pr is:merged author:@me sort:updated-desc",
             filtersDropped: dropped,
             allowListEmpty: allowListEmpty
         )
@@ -155,6 +167,8 @@ enum Query {
       $review: String!,
       $changesRequested: String!,
       $myPullRequests: String!,
+      $mentions: String!,
+      $merged: String!,
       $first: Int!
     ) {
       viewer {
@@ -179,7 +193,9 @@ enum Query {
       prs: search(query: $prs, type: ISSUE, first: $first) {
         issueCount
         nodes { ... on PullRequest {
-          number title url createdAt isDraft
+          number title url createdAt updatedAt isDraft reviewDecision mergeable mergeStateStatus
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
           author { login __typename }
           repository { nameWithOwner }
         } }
@@ -187,7 +203,8 @@ enum Query {
       issues: search(query: $issues, type: ISSUE, first: $first) {
         issueCount
         nodes { ... on Issue {
-          number title url createdAt
+          number title url createdAt updatedAt
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
           author { login __typename }
           repository { nameWithOwner }
         } }
@@ -195,7 +212,8 @@ enum Query {
       assignedIssues: search(query: $assignedIssues, type: ISSUE, first: $first) {
         issueCount
         nodes { ... on Issue {
-          number title url createdAt
+          number title url createdAt updatedAt
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
           author { login __typename }
           repository { nameWithOwner }
         } }
@@ -203,7 +221,9 @@ enum Query {
       review: search(query: $review, type: ISSUE, first: $first) {
         issueCount
         nodes { ... on PullRequest {
-          number title url createdAt isDraft
+          number title url createdAt updatedAt isDraft reviewDecision mergeable mergeStateStatus
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
           author { login __typename }
           repository { nameWithOwner }
         } }
@@ -211,13 +231,43 @@ enum Query {
       changesRequested: search(query: $changesRequested, type: ISSUE, first: $first) {
         issueCount
         nodes { ... on PullRequest {
-          number title url createdAt isDraft
+          number title url createdAt updatedAt isDraft reviewDecision mergeable mergeStateStatus
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
           author { login __typename }
           repository { nameWithOwner }
         } }
       }
       myPullRequests: search(query: $myPullRequests, type: ISSUE, first: $first) {
         issueCount
+        nodes { ... on PullRequest {
+          number title url createdAt updatedAt isDraft reviewDecision mergeable mergeStateStatus
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+          author { login __typename }
+          repository { nameWithOwner }
+        } }
+      }
+      mentions: search(query: $mentions, type: ISSUE, first: $first) {
+        issueCount
+        nodes {
+          __typename
+          ... on PullRequest {
+          number title url createdAt updatedAt isDraft reviewDecision mergeable mergeStateStatus
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+          author { login __typename }
+          repository { nameWithOwner }
+          }
+          ... on Issue {
+          number title url createdAt updatedAt
+          comments(last: 1) { totalCount nodes { author { login __typename } } }
+          author { login __typename }
+          repository { nameWithOwner }
+          }
+        }
+      }
+      merged: search(query: $merged, type: ISSUE, first: 20) {
         nodes { ... on PullRequest {
           number title url createdAt isDraft
           author { login __typename }

@@ -1,0 +1,5 @@
+[
+ {"id":"b1","status":"succeeded","created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-01T10:02:00Z","source_blob":{"version":"abc123","version_description":"Add billing"},"user":{"email":"alice@example.com"},"release":{"id":"r2"},"slug":{"id":"s2"},"app":{"id":"app-1","name":"api"}},
+ {"id":"b2","status":"failed","created_at":"2026-11-01T09:00:00Z","updated_at":"2026-11-01T09:01:30Z","source_blob":{"version":"bad999"},"user":{"email":"bob@example.com"},"release":null},
+ {"id":"b3","status":"pending","created_at":"2026-11-01T11:00:00Z","updated_at":"2026-11-01T11:00:10Z","source_blob":{"version":"new111"},"user":{"email":"alice@example.com"},"release":null}
+]

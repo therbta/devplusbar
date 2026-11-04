@@ -1,5 +1,6 @@
 import SwiftUI
 import Defaults
+import UserNotifications
 
 @MainActor
 final class SettingsController: NSObject, NSWindowDelegate {
@@ -41,12 +42,14 @@ struct SettingsView: View {
     private enum Tab: String, CaseIterable {
         case accounts = "Accounts"
         case repositories = "Repositories"
+        case deployments = "Deployments"
         case general = "General"
 
         var symbol: String {
             switch self {
             case .accounts: "person.crop.circle"
             case .repositories: "folder"
+            case .deployments: "shippingbox"
             case .general: "gearshape"
             }
         }
@@ -82,11 +85,13 @@ struct SettingsView: View {
                 AccountsPane(onSignOut: onSignOut, onSignIn: onSignIn)
             case .repositories:
                 RepositoriesPane()
+            case .deployments:
+                DeploymentsPane()
             case .general:
                 GeneralPane()
             }
         }
-        .frame(width: 440, height: 460)
+        .frame(width: 500, height: 520)
     }
 }
 
@@ -327,6 +332,13 @@ struct GeneralPane: View {
     @Default(.refreshMinutes) private var refreshMinutes
     @Default(.notificationsEnabled) private var notificationsEnabled
     @Default(.showBarToast) private var showBarToast
+    @Default(.notifyWorkflowFailures) private var notifyWorkflowFailures
+    @Default(.notifyComments) private var notifyComments
+    @Default(.notifyClaudeCap) private var notifyClaudeCap
+    @Default(.notifyUnpushed) private var notifyUnpushed
+    /// What macOS allows, not what Dev+ Bar wants: with notifications off in System Settings
+    /// every banner is dropped without a word, so the pane says so.
+    @State private var systemDenied = false
     @Default(.showBots) private var showBots
     @Default(.showDrafts) private var showDrafts
     @Default(.showPullRequests) private var showPullRequests
@@ -334,10 +346,14 @@ struct GeneralPane: View {
     @Default(.showReviewRequested) private var showReviewRequested
     @Default(.showChangesRequested) private var showChangesRequested
     @Default(.showMyPullRequests) private var showMyPullRequests
+    @Default(.showMentions) private var showMentions
     @Default(.showEmptySections) private var showEmptySections
     @Default(.rateLimitVisibility) private var rateLimitVisibility
     @Default(.repoGroupThreshold) private var groupThreshold
     @Default(.checkForUpdates) private var checkForUpdates
+    @Default(.showAIUsage) private var showAIUsage
+    @Default(.showLocal) private var showLocal
+    @Default(.localRoots) private var localRoots
 
     var body: some View {
         Form {
@@ -348,7 +364,15 @@ struct GeneralPane: View {
                 Toggle(SectionKind.pullRequests.tabTitle(short: false), isOn: $showPullRequests)
                 Toggle(SectionKind.issues.tabTitle(short: false), isOn: $showIssues)
                 Toggle(SectionKind.myPullRequests.tabTitle(short: false), isOn: $showMyPullRequests)
+                Toggle(SectionKind.mentions.tabTitle(short: false), isOn: $showMentions)
                 Toggle("Keep empty tabs visible", isOn: $showEmptySections)
+                Toggle("AI usage (Claude Code, Codex logs on this Mac)", isOn: $showAIUsage)
+                Toggle("Local work (unpushed repositories, dev servers on this Mac)", isOn: $showLocal)
+                if showLocal {
+                    TextField("Folders", text: $localRoots,
+                              prompt: Text(LocalScanner.defaultRoots().map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", ")))
+                        .help("Comma-separated. Repositories up to three folders deep are found. Empty = the usual places.")
+                }
             }
             Section("Panel footer") {
                 Picker("Show API calls left", selection: $rateLimitVisibility) {
@@ -366,6 +390,21 @@ struct GeneralPane: View {
                 Text("1 hour").tag(60)
             }
             Toggle("Show notifications", isOn: $notificationsEnabled)
+            if notificationsEnabled && systemDenied {
+                HStack {
+                    Label("macOS has notifications turned off for Dev+ Bar, so none are shown. The menu bar pop-up still works.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Open System Settings") { NotificationPermission.openSystemSettings() }
+                }
+            }
+            Toggle("Notify when a workflow on your repositories' default branch starts failing",
+                   isOn: $notifyWorkflowFailures)
+            Toggle("Notify when someone comments on a thread here (not you, not a bot)", isOn: $notifyComments)
+            Toggle("Warn at 75% and 90% of the weekly Claude Code limit, and when your pace runs out before the reset",
+                   isOn: $notifyClaudeCap)
+            Toggle("Nudge when recent commits have sat a day without being pushed", isOn: $notifyUnpushed)
             Toggle("Drop a pop-up from the menu bar icon", isOn: $showBarToast)
             Toggle("Show bot activity", isOn: $showBots)
             Toggle("Show draft pull requests", isOn: $showDrafts)
@@ -386,5 +425,23 @@ struct GeneralPane: View {
             #endif
         }
         .formStyle(.grouped)
+        .task { systemDenied = await NotificationPermission.isDenied() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { systemDenied = await NotificationPermission.isDenied() }
+        }
+    }
+}
+
+enum NotificationPermission {
+    static func isDenied() async -> Bool {
+        guard Bundle.main.bundleIdentifier != nil else { return false }
+        return await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
+    }
+
+    static func openSystemSettings() {
+        let id = Bundle.main.bundleIdentifier ?? ""
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }

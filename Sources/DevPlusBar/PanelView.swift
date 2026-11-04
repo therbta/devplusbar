@@ -4,8 +4,13 @@ import SwiftUI
 /// What the panel does when something in it is clicked; the app delegate supplies these.
 struct PanelActions {
     var open: (Item) -> Void = { _ in }
+    var openPage: (Item, String) -> Void = { _, _ in }
+    var openAddress: (String) -> Void = { _ in }
     var markAllSeen: () -> Void = {}
     var markSectionSeen: (SectionKind) -> Void = { _ in }
+    var markSeen: ([String]) -> Void = { _ in }
+    /// Stops watching a repository ("owner/name").
+    var hideRepository: (String) -> Void = { _ in }
     var openProfile: () -> Void = {}
     var refresh: () -> Void = {}
     var openSettings: () -> Void = {}
@@ -20,13 +25,35 @@ struct PanelActions {
 final class PanelModel: ObservableObject {
     @Published var input: PanelInput?
     @Published var tab: SectionKind?
+    /// The side the panel opens on. Deploys first; with no provider connected the panel shows
+    /// GitHub instead (see `shownMode`), and picks Deploys up once one is connected.
+    @Published var mode: PanelMode = .deploys
+    /// The Deploys side's page, filter, open cards and keyboard cursor.
+    let deploys = DeployPanelState()
+    /// The Local side's cursor.
+    let local = LocalPanelState()
     /// Bumped each time the panel opens, so the view can take keyboard focus.
     @Published var opened = 0
     var actions = PanelActions()
+
+    /// The next side of the panel to the right (1) or left (-1), as the arrow keys move.
+    func step(_ delta: Int) {
+        guard let modes = input?.availableModes, let index = modes.firstIndex(of: shownMode) else { return }
+        let next = index + delta
+        if modes.indices.contains(next) { mode = modes[next] }
+    }
+
+    /// The side actually on screen: `mode`, or GitHub when that side is turned off.
+    var shownMode: PanelMode {
+        guard let modes = input?.availableModes, modes.contains(mode) else { return .work }
+        return mode
+    }
 }
 
+enum PanelMode: String, CaseIterable { case work = "GitHub", deploys = "Deploys", local = "Local", ai = "AI Usage" }
+
 /// The panel under the menu bar item: who you are, then the work waiting for you, one kind at a
-/// time. Green means one thing only: something you have not seen yet.
+/// time. The brand orange means one thing only: something you have not seen yet.
 struct PanelView: View {
     @ObservedObject var model: PanelModel
     @State private var expanded: Set<String> = []
@@ -43,8 +70,19 @@ struct PanelView: View {
                     signedOut(input.auth, refused: input.authRefused)
                 } else {
                     header(input)
-                    if !input.errors.isEmpty || !input.notices.isEmpty { errors(input) }
-                    work(input)
+                    if input.availableModes.count > 1 { modeSwitch(input) }
+                    if model.mode == .deploys && input.deploysEnabled {
+                        DeploysPanel(monitor: DeployMonitor.shared, state: model.deploys,
+                                     open: actions.openAddress, openSettings: actions.openSettings)
+                    } else if model.mode == .local && input.localEnabled {
+                        LocalPanel(monitor: LocalMonitor.shared, deploys: DeployMonitor.shared,
+                                   state: model.local, open: actions.openAddress)
+                    } else if model.mode == .ai && input.aiEnabled {
+                        AIPanel(monitor: AIMonitor.shared)
+                    } else {
+                        if !input.errors.isEmpty || !input.notices.isEmpty { errors(input) }
+                        work(input)
+                    }
                     footer(input)
                 }
             } else {
@@ -54,12 +92,24 @@ struct PanelView: View {
         .frame(width: 380)
         .foregroundStyle(Ink.primary)
         .background(shortcuts)
-        // The panel works from the keyboard: arrows move between rows and tabs, Return opens.
+        // The panel works from the keyboard: arrows move between rows and tabs, Return opens, ⌘↩ opens the checks or conflicts.
         .focusable()
         .focused($focused)
         .focusEffectDisabled()
-        .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .return]) { press in
-            handle(press.key) ? .handled : .ignored
+        .onKeyPress(phases: .down) { press in
+            if model.mode == .deploys, model.input?.deploysEnabled == true {
+                return DeployKeys.handle(press, model: model, open: actions.openAddress) ? .handled : .ignored
+            }
+            if model.mode == .local, model.input?.localEnabled == true {
+                return LocalKeys.handle(press, model: model) ? .handled : .ignored
+            }
+            if model.mode == .ai, model.input?.aiEnabled == true {
+                guard press.key == .leftArrow || press.key == .rightArrow else { return .ignored }
+                model.step(press.key == .rightArrow ? 1 : -1)
+                return .handled
+            }
+            guard [.upArrow, .downArrow, .leftArrow, .rightArrow, .return].contains(press.key) else { return .ignored }
+            return handle(press.key, command: press.modifiers.contains(.command)) ? .handled : .ignored
         }
         .onChange(of: model.opened) {
             cursor = nil
@@ -84,7 +134,8 @@ struct PanelView: View {
     }
 
     private func entries(_ section: MenuSection) -> [Entry] {
-        section.rows.flatMap { row -> [Entry] in
+        let now = model.input?.now ?? Date()
+        return Self.buckets(section.rows, now: now).flatMap(\.rows).flatMap { row -> [Entry] in
             switch row {
             case .item(let item):
                 return [.item(item)]
@@ -95,7 +146,18 @@ struct PanelView: View {
         }
     }
 
-    private func handle(_ key: KeyEquivalent) -> Bool {
+    /// A tab's rows split by status, strongest first; a repository group goes where its most
+    /// urgent item would.
+    static func buckets(_ rows: [Row], now: Date) -> [(status: ItemStatus, rows: [Row])] {
+        let keyed = rows.map { row in (row.items.map { $0.status(now: now) }.min() ?? .open, row) }
+        return ItemStatus.allCases.compactMap { status in
+            let matching = keyed.filter { $0.0 == status }.map(\.1)
+            return matching.isEmpty ? nil : (status, matching)
+        }
+    }
+
+    /// ⌘↩ opens the page where the selected item's problem gets fixed, like clicking its badge.
+    private func handle(_ key: KeyEquivalent, command: Bool = false) -> Bool {
         guard let input = model.input, !input.isSignedOut else { return false }
         let kinds = kinds(input)
         guard let tab = current(input, kinds) else { return false }
@@ -122,7 +184,9 @@ struct PanelView: View {
             guard let section = section(tab, input),
                   let entry = entries(section).first(where: { $0.id == cursor }) else { return true }
             switch entry {
-            case .item(let item): actions.open(item)
+            case .item(let item):
+                if command, let page = item.problemPage { actions.openPage(item, page) }
+                else { actions.open(item) }
             case .group(let key, _):
                 withAnimation(.easeOut(duration: 0.18)) {
                     if expanded.contains(key) { expanded.remove(key) } else { expanded.insert(key) }
@@ -144,6 +208,56 @@ struct PanelView: View {
         }
         .opacity(0)
         .accessibilityHidden(true)
+    }
+
+    // MARK: mode
+
+    /// GitHub | Deploys, with a dot when a deployment needs a look.
+    private func modeSwitch(_ input: PanelInput) -> some View {
+        HStack(spacing: 4) {
+            ForEach(input.availableModes, id: \.self) { mode in
+                let active = model.shownMode == mode
+                Button { model.mode = mode } label: {
+                    HStack(spacing: 5) {
+                        Text(mode.rawValue).font(active ? Ink.tabActive : Ink.tab)
+                        if mode == .deploys, let state = input.deployIndicator {
+                            Circle().fill(DeployText.tint(state)).frame(width: 6, height: 6)
+                        }
+                        if mode == .local, input.localUnpushed > 0 {
+                            Text("\(input.localUnpushed)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(Ink.warning)
+                                .help("\(input.localUnpushed) repositories have commits that are not on GitHub")
+                        }
+                    }
+                    .foregroundStyle(active ? Ink.primary : Ink.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Capsule().fill(active ? Ink.raised : .clear))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(active ? .isSelected : [])
+                .contextMenu { modeMenu(mode) }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14).padding(.bottom, 8)
+    }
+
+    @ViewBuilder private func modeMenu(_ mode: PanelMode) -> some View {
+        switch mode {
+        case .work:
+            Button("Refresh GitHub", action: actions.refresh)
+            Button("Mark Everything Read", action: actions.markAllSeen)
+        case .deploys:
+            Button("Refresh Deployments") { DeployMonitor.shared.refresh() }
+            Button("Mark All Deployments Seen") { DeployMonitor.shared.markAllSeen() }
+        case .local:
+            Button("Rescan Repositories and Servers") { Task { await LocalMonitor.shared.scanNow() } }
+        case .ai:
+            Button("Rescan AI Logs") { Task { await AIMonitor.shared.scanNow() } }
+        }
+        Divider()
+        Button("Settings…", action: actions.openSettings)
     }
 
     // MARK: header
@@ -169,6 +283,19 @@ struct PanelView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open your GitHub profile")
+                .contextMenu {
+                    Button("Open Your Profile", action: actions.openProfile)
+                    if let login = input.viewer?.login {
+                        Button("Open Your Pull Requests") { actions.openAddress("https://github.com/pulls") }
+                        Button("Open Your Notifications") { actions.openAddress("https://github.com/notifications") }
+                        Divider()
+                        Button("Copy Profile Link") { DeployCommands.copy("https://github.com/\(login)") }
+                    }
+                    Divider()
+                    Button("Mark Everything Read", action: actions.markAllSeen)
+                    Button("Refresh", action: actions.refresh)
+                    Button("Settings…", action: actions.openSettings)
+                }
                 .layoutPriority(1)
                 Spacer(minLength: 0)
                 HStack(spacing: 0) {
@@ -177,7 +304,8 @@ struct PanelView: View {
                 }
                 .padding(.top, 3)
             }
-            if !input.knownOrganizations.isEmpty { organizations(input) }
+            // The organization filter only narrows the GitHub side.
+            if !input.knownOrganizations.isEmpty && model.shownMode == .work { organizations(input) }
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)
@@ -350,9 +478,9 @@ struct PanelView: View {
                                 Text(verbatim: "\(unseen > 0 ? unseen : total)")
                                     .font(Ink.meta)
                                     .monospacedDigit()
-                                    .foregroundStyle(unseen > 0 ? Ink.green : Ink.tertiary)
+                                    .foregroundStyle(unseen > 0 ? Ink.accent : Ink.tertiary)
                             } else if !counts, unseen > 0 {
-                                Circle().fill(Ink.green).frame(width: 5, height: 5)
+                                Circle().fill(Ink.accent).frame(width: 5, height: 5)
                             }
                         }
                         Capsule().fill(active ? Ink.primary : .clear).frame(height: 2)
@@ -374,28 +502,14 @@ struct PanelView: View {
             ScrollViewReader { scroller in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(section.rows, id: \.self) { row in
-                        switch row {
-                        case .item(let item):
-                            ItemRow(item: item, input: input, selected: cursor == item.url, open: actions.open)
-                                .id(item.url)
-                        case .group(let repository, let items):
-                            let key = "\(section.kind.rawValue)/\(repository)"
-                            GroupRow(repository: repository, items: items, input: input,
-                                     expanded: expanded.contains(key), selected: cursor == key) {
-                                withAnimation(.easeOut(duration: 0.18)) {
-                                    if expanded.contains(key) { expanded.remove(key) }
-                                    else { expanded.insert(key) }
-                                }
-                            }
-                            .id(key)
-                            if expanded.contains(key) {
-                                ForEach(items) { item in
-                                    ItemRow(item: item, input: input, selected: cursor == item.url, open: actions.open)
-                                        .padding(.leading, 20)
-                                        .id(item.url)
-                                }
-                            }
+                    let buckets = Self.buckets(section.rows, now: input.now)
+                    ForEach(buckets, id: \.status) { bucket in
+                        // One group needs no heading; the tab already names it.
+                        if buckets.count > 1 {
+                            BucketHeader(status: bucket.status, count: bucket.rows.reduce(0) { $0 + $1.items.count })
+                        }
+                        ForEach(bucket.rows, id: \.self) { row in
+                            rowView(row, section: section, input: input)
                         }
                     }
                     if section.truncated {
@@ -419,6 +533,80 @@ struct PanelView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 36)
         }
+    }
+
+    @ViewBuilder private func rowView(_ row: Row, section: MenuSection, input: PanelInput) -> some View {
+        switch row {
+        case .item(let item):
+            ItemRow(item: item, input: input, selected: cursor == item.url, open: actions.open, openPage: actions.openPage)
+                .contextMenu { itemMenu(item, input) }
+                .id(item.url)
+        case .group(let repository, let items):
+            let key = "\(section.kind.rawValue)/\(repository)"
+            GroupRow(repository: repository, items: items, input: input,
+                     expanded: expanded.contains(key), selected: cursor == key) {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    if expanded.contains(key) { expanded.remove(key) }
+                    else { expanded.insert(key) }
+                }
+            }
+            .contextMenu { groupMenu(repository, items, expanded: expanded.contains(key), toggle: key) }
+            .id(key)
+            if expanded.contains(key) {
+                ForEach(items) { item in
+                    ItemRow(item: item, input: input, selected: cursor == item.url, open: actions.open, openPage: actions.openPage)
+                        .contextMenu { itemMenu(item, input) }
+                        .padding(.leading, 20)
+                        .id(item.url)
+                }
+            }
+        }
+    }
+
+    // MARK: right-click menus
+
+    @ViewBuilder private func itemMenu(_ item: Item, _ input: PanelInput) -> some View {
+        Button(item.kind == .issue ? "Open Issue" : "Open Pull Request") { actions.open(item) }
+        if let page = item.problemPage {
+            Button(item.merge == .conflicts ? "Open Conflicts" : "Open Checks") { actions.openPage(item, page) }
+        }
+        if item.kind != .issue {
+            Button("Open Files Changed") { actions.openPage(item, item.url + "/files") }
+        }
+        if let d = input.deploymentFor(item), let site = d.url {
+            Button("Open Preview Deployment") { actions.openAddress(site.absoluteString) }
+        }
+        Button("Open Repository") { actions.openAddress("https://github.com/\(item.repository)") }
+        Button("Open @\(item.authorLogin)'s Profile") { actions.openAddress("https://github.com/\(item.authorLogin)") }
+        Divider()
+        Button("Copy Link") { DeployCommands.copy(item.url) }
+        Button("Copy as Markdown") { DeployCommands.copy("[\(item.repositoryName)#\(item.number): \(item.title)](\(item.url))") }
+        Button("Copy Reference (\(item.repository)#\(item.number))") { DeployCommands.copy("\(item.repository)#\(item.number)") }
+        if item.kind != .issue {
+            Button("Copy Checkout Command") { DeployCommands.copy("gh pr checkout \(item.number) -R \(item.repository)") }
+        }
+        Divider()
+        if !input.isSeen(item.url) { Button("Mark as Read") { actions.markSeen([item.url]) } }
+        Button("Stop Watching \(item.repository)…") { actions.hideRepository(item.repository) }
+    }
+
+    @ViewBuilder private func groupMenu(_ repository: String, _ items: [Item], expanded: Bool, toggle key: String) -> some View {
+        Button(expanded ? "Collapse" : "Expand") {
+            withAnimation(.easeOut(duration: 0.18)) {
+                if self.expanded.contains(key) { self.expanded.remove(key) } else { self.expanded.insert(key) }
+            }
+        }
+        Divider()
+        Button("Open Repository") { actions.openAddress("https://github.com/\(repository)") }
+        Button("Open Pull Requests") { actions.openAddress("https://github.com/\(repository)/pulls") }
+        Button("Open Issues") { actions.openAddress("https://github.com/\(repository)/issues") }
+        Button("Open Actions") { actions.openAddress("https://github.com/\(repository)/actions") }
+        Divider()
+        Button("Copy Name") { DeployCommands.copy(repository) }
+        Button("Copy All Links") { DeployCommands.copy(items.map(\.url).joined(separator: "\n")) }
+        Divider()
+        Button("Mark All \(items.count) as Read") { actions.markSeen(items.map(\.url)) }
+        Button("Stop Watching \(repository)…") { actions.hideRepository(repository) }
     }
 
     private func empty(_ input: PanelInput) -> some View {
@@ -543,47 +731,41 @@ struct PanelView: View {
 
 // MARK: - rows
 
-/// One pull request or issue: who sent it, what it is, where, and how long ago.
+/// One pull request or issue: what it is, where, its state, and how long since anything happened.
+/// Your own work shows its state where the avatar would be: your face on every row says nothing.
 struct ItemRow: View {
     let item: Item
     let input: PanelInput
     var selected = false
     let open: (Item) -> Void
+    var openPage: (Item, String) -> Void = { _, _ in }
     @State private var hover = false
+
+    private var isMine: Bool { item.authorLogin == input.viewer?.login }
 
     var body: some View {
         let seen = input.isSeen(item.url)
+        let status = item.status(now: input.now)
         Button { open(item) } label: {
             HStack(alignment: .top, spacing: 11) {
-                AuthorAvatar(login: item.authorLogin, isBot: item.authorIsBot)
+                leading(status)
                     .frame(width: 28, height: 28)
-                    .opacity(seen ? 0.6 : 1)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline) {
+                    .opacity(seen ? 0.65 : 1)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(item.title)
                             .font(seen ? Ink.body : Ink.body.weight(.medium))
                             .foregroundStyle(seen ? Ink.secondary : Ink.primary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
-                        Spacer(minLength: 8)
-                        Text(verbatim: Formatting.age(of: item.createdAt, now: input.now))
+                        Spacer(minLength: 0)
+                        Text(verbatim: Formatting.age(of: item.lastActivity, now: input.now))
                             .font(Ink.meta).monospacedDigit().foregroundStyle(Ink.tertiary)
+                            .help("Last activity")
                     }
-                    HStack(spacing: 0) {
-                        Text(verbatim: input.showOwner ? item.repository : item.repositoryName)
-                            .foregroundStyle(Ink.secondary)
-                            .truncationMode(.middle)
-                            .layoutPriority(1)
-                        Text(verbatim: " #\(item.number)").foregroundStyle(Ink.secondary)
-                            .fixedSize()
-                            .layoutPriority(3)
-                        Text(verbatim: " by \(item.authorLogin)\(item.isDraft ? ", draft" : "")")
-                            .foregroundStyle(Ink.tertiary)
-                    }
-                    .font(Ink.meta)
-                    .lineLimit(1)
+                    meta
                 }
-                Circle().fill(seen ? Color.clear : Ink.green).frame(width: 6, height: 6).padding(.top, 6)
+                Circle().fill(seen ? Color.clear : Ink.accent).frame(width: 6, height: 6).padding(.top, 6)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -597,10 +779,159 @@ struct ItemRow: View {
             "\(item.repositoryName) number \(item.number)",
             item.kind == .issue ? "issue" : (item.isDraft ? "draft pull request" : "pull request"),
             item.title,
-            "by \(item.authorLogin)",
-            Formatting.spokenAge(of: item.createdAt, now: input.now),
+            isMine ? "yours" : "by \(item.authorLogin)",
+            status.title,
+            item.merge?.help ?? "",
+            Formatting.spokenAge(of: item.lastActivity, now: input.now),
             seen ? "read" : "unread",
-        ].joined(separator: ", "))
+            item.problemPage == nil ? "" : "Command-Return opens \(item.merge == .conflicts ? "the conflicts" : "the checks")",
+        ].filter { !$0.isEmpty }.joined(separator: ", "))
+    }
+
+    /// Your own repositories by name; anyone else's as owner/name, so a PR to someone else's
+    /// project says whose it is.
+    private var repositoryLabel: String {
+        let owner = item.repository.split(separator: "/").first.map(String.init)
+        return input.showOwner || owner != input.viewer?.login ? item.repository : item.repositoryName
+    }
+
+    @ViewBuilder private func leading(_ status: ItemStatus) -> some View {
+        if isMine {
+            Circle().fill(status.tint.opacity(0.16))
+                .overlay(Image(systemName: item.kind.symbol(draft: item.isDraft))
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(status.tint))
+        } else {
+            AuthorAvatar(login: item.authorLogin, isBot: item.authorIsBot)
+        }
+    }
+
+    /// repo #12 · author · checks · comments
+    private var meta: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "book.closed").font(.system(size: 9.5, weight: .medium))
+                Text(verbatim: repositoryLabel)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Ink.primary.opacity(0.78))
+                    .truncationMode(.middle)
+                Text(verbatim: "#\(item.number)").fixedSize()
+            }
+            .foregroundStyle(Ink.secondary)
+            .help(item.repository)
+            .layoutPriority(1)
+            if !isMine {
+                Text(verbatim: item.authorLogin).foregroundStyle(Ink.tertiary).truncationMode(.tail)
+            }
+            // Each badge opens the GitHub page where its problem gets fixed.
+            if let merge = item.merge {
+                Badge(help: merge.help + " (click to open \(merge.pageName))") {
+                    openPage(item, item.url + merge.path)
+                } label: {
+                    Text(merge.label)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(merge.tint)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(merge.tint.opacity(0.14)))
+                }
+            }
+            if let checks = item.checks {
+                Badge(help: checks.help + " (click to open the checks)") {
+                    openPage(item, item.url + "/checks")
+                } label: {
+                    Image(systemName: checks.symbol).foregroundStyle(checks.tint)
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 2)
+                }
+            }
+            if let deploy = input.deploymentFor(item) {
+                Badge(help: "\(deploy.provider.title) \(deploy.target.title.lowercased()) deployment \(deploy.state.title.lowercased()) (click to open)") {
+                    openPage(item, (deploy.url ?? deploy.dashboardURL)?.absoluteString ?? item.url)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: DeployText.providerSymbol(deploy.provider)).font(.system(size: 7))
+                        Text(deploy.target.isProduction ? "prod" : "preview")
+                        Image(systemName: DeployText.symbol(deploy.state)).font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DeployText.tint(deploy.state))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Capsule().fill(DeployText.tint(deploy.state).opacity(0.14)))
+                }
+            }
+            if item.comments > 0 {
+                HStack(spacing: 2) {
+                    Image(systemName: "bubble.left").font(.system(size: 9.5))
+                    Text(verbatim: "\(item.comments)").monospacedDigit()
+                }
+                .foregroundStyle(Ink.tertiary)
+                .fixedSize()
+            }
+        }
+        .font(Ink.meta)
+        .lineLimit(1)
+    }
+}
+
+extension Item {
+    /// The page to open from a notification about `event`.
+    func problemPage(for event: PREvent) -> String? {
+        switch event {
+        case .became(.conflicts): url + "/conflicts"
+        case .became(.failing): url + "/checks"
+        default: nil
+        }
+    }
+
+    /// Where the row's most pressing badge leads: conflicts first, then checks. Nil when the
+    /// pull request page itself is the right place.
+    var problemPage: String? {
+        if merge == .conflicts { return url + "/conflicts" }
+        if checks != nil { return url + "/checks" }
+        return nil
+    }
+}
+
+/// A clickable badge inside a row: brightens on hover, and its click goes to its own page
+/// rather than the row's.
+struct Badge<Label: View>: View {
+    let help: String
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .brightness(hover ? 0.15 : 0)
+                .background(Capsule().fill(Color.white.opacity(hover ? 0.08 : 0)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .onHover { hover = $0 }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// The heading over one status group in a tab.
+struct BucketHeader: View {
+    let status: ItemStatus
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(status.tint).frame(width: 6, height: 6)
+            Text(status.title.uppercased()).font(.system(size: 10, weight: .semibold)).kerning(0.6)
+                .foregroundStyle(Ink.secondary)
+            Text(verbatim: "\(count)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Ink.tertiary)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -627,7 +958,7 @@ struct GroupRow: View {
                     .foregroundStyle(unseen ? Ink.primary : Ink.secondary)
                     .lineLimit(1)
                 Text(verbatim: "\(items.count)").font(Ink.meta).monospacedDigit()
-                    .foregroundStyle(unseen ? Ink.green : Ink.tertiary)
+                    .foregroundStyle(unseen ? Ink.accent : Ink.tertiary)
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
@@ -648,7 +979,7 @@ struct GroupRow: View {
 // MARK: - pieces
 
 enum Ink {
-    /// The graphite of the app icon, and its green.
+    /// A graphite panel under the orange of the app icon.
     static let panel = Color(red: 0.090, green: 0.098, blue: 0.118)
     static let raised = Color.white.opacity(0.055)
     static let hairline = Color.white.opacity(0.07)
@@ -656,7 +987,11 @@ enum Ink {
     static let secondary = Color(red: 0.569, green: 0.596, blue: 0.631)
     /// 5.3:1 on the panel, 4.6:1 on a hovered row: WCAG AA for small text.
     static let tertiary = Color(red: 0.530, green: 0.550, blue: 0.590)
+    /// Dev+ Bar orange, #FC4206: unseen work.
+    static let accent = Color(red: 0.988, green: 0.259, blue: 0.024)
     static let green = Color(red: 0.200, green: 0.761, blue: 0.369)
+    static let red = Color(red: 0.96, green: 0.36, blue: 0.36)
+    static let purple = Color(red: 0.66, green: 0.52, blue: 0.98)
     static let warning = Color(red: 0.95, green: 0.66, blue: 0.27)
 
     static let name = Font.system(size: 14, weight: .semibold)
@@ -704,10 +1039,10 @@ struct QuietButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Ink.meta.weight(.medium))
-            .foregroundStyle(prominent ? Color.black : Ink.primary)
+            .foregroundStyle(prominent ? Color.white : Ink.primary)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .background(Capsule().fill(prominent ? Ink.green : Ink.raised))
+            .background(Capsule().fill(prominent ? Ink.accent : Ink.raised))
             .opacity(configuration.isPressed ? 0.75 : 1)
     }
 }
@@ -776,6 +1111,87 @@ extension SectionKind {
         case .pullRequests: short ? "PRs" : "Pull requests"
         case .issues: "Issues"
         case .myPullRequests: short ? "Mine" : "My PRs"
+        case .mentions: "Mentions"
+        }
+    }
+}
+
+extension ItemKind {
+    func symbol(draft: Bool) -> String {
+        switch self {
+        case .issue: "smallcircle.filled.circle"
+        case .pullRequest: draft ? "circle.dashed" : "arrow.triangle.pull"
+        }
+    }
+}
+
+extension ItemStatus {
+    var tint: Color {
+        switch self {
+        case .changesRequested: Ink.warning
+        case .conflicts, .failing: Ink.red
+        case .approved: Ink.green
+        case .open: Ink.purple
+        case .draft, .stale: Ink.secondary
+        }
+    }
+}
+
+extension CheckState {
+    var symbol: String {
+        switch self {
+        case .passing: "checkmark"
+        case .failing: "xmark"
+        case .pending: "circle.fill"
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .passing: Ink.green
+        case .failing: Ink.red
+        case .pending: Ink.warning
+        }
+    }
+    var help: String {
+        switch self {
+        case .passing: "Checks passed"
+        case .failing: "Checks failing"
+        case .pending: "Checks running"
+        }
+    }
+}
+
+extension MergeBlock {
+    var label: String {
+        switch self {
+        case .conflicts: "Conflicts"
+        case .behind: "Behind"
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .conflicts: Ink.red
+        case .behind: Ink.warning
+        }
+    }
+    /// GitHub's web conflict editor. Behind has no page of its own: the "Update branch"
+    /// button sits in the merge box at the foot of the pull request.
+    var path: String {
+        switch self {
+        case .conflicts: "/conflicts"
+        case .behind: ""
+        }
+    }
+    var pageName: String {
+        switch self {
+        case .conflicts: "the conflict editor"
+        case .behind: "the pull request"
+        }
+    }
+    var help: String {
+        switch self {
+        case .conflicts: "Has merge conflicts with the base branch"
+        case .behind: "Out of date with the base branch"
         }
     }
 }

@@ -18,6 +18,23 @@ extension Defaults.Keys {
     static let showReviewRequested = Key<Bool>("showReviewRequested", default: true)
     static let showChangesRequested = Key<Bool>("showChangesRequested", default: true)
     static let showMyPullRequests = Key<Bool>("showMyPullRequests", default: true)
+    static let showMentions = Key<Bool>("showMentions", default: true)
+    /// Last known state of each of your open pull requests (URL -> PRSignal raw values), to
+    /// notify when it changes.
+    static let pullRequestSignals = Key<[String: [String]]>("pullRequestSignals", default: [:])
+    static let notifyOwnPullRequests = Key<Bool>("notifyOwnPullRequests", default: true)
+    /// A workflow on the default branch of a repository you own starting to fail.
+    static let notifyWorkflowFailures = Key<Bool>("notifyWorkflowFailures", default: true)
+    /// A person, not you and not a bot, commenting on a thread Dev+ Bar shows.
+    static let notifyComments = Key<Bool>("notifyComments", default: true)
+    /// Comment count of each open thread when last seen (URL -> count).
+    static let commentCounts = Key<[String: Int]>("commentCounts", default: [:])
+    /// Last verdict of each watched workflow ("owner/repo#workflowID" -> failing), to notify
+    /// only when one turns red.
+    static let workflowVerdicts = Key<[String: Bool]>("workflowVerdicts", default: [:])
+    /// Workflows disabled from Dev+ Bar ("owner/repo#workflowID" -> when, seconds since 1970);
+    /// their runs from before then no longer count as red.
+    static let disabledWorkflows = Key<[String: Double]>("disabledWorkflows", default: [:])
     static let showEmptySections = Key<Bool>("showEmptySections", default: false)
     static let rateLimitVisibility = Key<String>("rateLimitVisibility",
                                                  default: RateLimitVisibility.whenLow.rawValue)
@@ -64,6 +81,7 @@ extension Settings {
         settings.showReviewRequested = Defaults[.showReviewRequested]
         settings.showChangesRequested = Defaults[.showChangesRequested]
         settings.showMyPullRequests = Defaults[.showMyPullRequests]
+        settings.showMentions = Defaults[.showMentions]
         settings.showEmptySections = Defaults[.showEmptySections]
         settings.rateLimitVisibility =
             RateLimitVisibility(rawValue: Defaults[.rateLimitVisibility]) ?? .whenLow

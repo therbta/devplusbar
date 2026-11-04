@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem { panel.statusItem }
     private let seenStore = SeenStore(url: SeenStore.defaultURL)
     private let notifier = Notifier()
+    private let workflows = WorkflowMonitor.shared
     private var toast: BarToast!
     #if !MAS
     private let updateChecker = UpdateChecker()
@@ -38,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastRefresh: Date?
     private var refreshGate = RefreshGate()
     private var timer: Timer?
+    private var iconShowsBlocked = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Dock'ta ikon gosterme. Asama 2'de .app paketine LSUIElement eklenecek;
@@ -49,10 +51,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toast = BarToast(statusItem: panel.statusItem, style: PanelPreview.style)
         toast.onOpen = { [weak self] url in self?.open(url, markSeen: true) }
         toast.onOpenSummary = { [weak self] in self?.panel.open() }
+        toast.onOpenMode = { [weak self] mode in self?.open(mode) }
+        panel.onClose = { [weak self] in self?.flushNotices() }
         panelModel.actions = PanelActions(
             open: { [weak self] item in self?.panel.close(); self?.open(item.url, markSeen: true) },
+            // A view inside the item, such as its checks; the item itself counts as seen.
+            openPage: { [weak self] item, address in
+                self?.panel.close()
+                self?.seenStore.markSeen([item.url], at: Date())
+                try? self?.seenStore.save()
+                self?.open(address, markSeen: false)
+            },
+            openAddress: { [weak self] address in self?.panel.close(); self?.open(address, markSeen: false) },
             markAllSeen: { [weak self] in self?.markAllSeen() },
             markSectionSeen: { [weak self] kind in self?.markSeen(kind) },
+            markSeen: { [weak self] urls in
+                self?.seenStore.markSeen(urls, at: Date())
+                try? self?.seenStore.save()
+                self?.rebuildMenu()
+            },
+            hideRepository: { [weak self] repository in self?.hideRepository(repository) },
             openProfile: { [weak self] in self?.panel.close(); self?.openProfile() },
             refresh: { [weak self] in self?.refresh() },
             openSettings: { [weak self] in self?.panel.close(); self?.openSettings() },
@@ -79,7 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onSignIn = { [weak self] in self?.openWelcome() }
         notifier.onOpen = { [weak self] url in self?.open(url, markSeen: true) }
         notifier.onOpenSummary = { [weak self] in self?.panel.open() }
+        notifier.onOpenMode = { [weak self] mode in self?.open(mode) }
         notifier.start()
+        startDeployments()
         #if !MAS
         updateChecker.start()
         #endif
@@ -95,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                              .repoListIsAllowList, .showBots, .showDrafts,
                                              .showPullRequests, .showIssues,
                                              .showReviewRequested, .showChangesRequested,
-                                             .showMyPullRequests,
+                                             .showMyPullRequests, .showMentions,
                                              .refreshMinutes, .repoGroupThreshold], initial: false) {
                 guard let self else { return }
                 self.scheduleTimer()
@@ -106,8 +126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Yalnizca cizimi degistiren ayarlar. Yukaridaki listeye konsaydi her
         // isaret bir GitHub istegi harcardi; elde olan veri zaten yeterli.
         displayObserver = Task { [weak self] in
-            for await _ in Defaults.updates([.showEmptySections, .rateLimitVisibility], initial: false) {
+            for await _ in Defaults.updates([.showEmptySections, .rateLimitVisibility, .showAIUsage, .showLocal, .localRoots], initial: false) {
                 guard let self else { return }
+                if Defaults[.showAIUsage] { await AIMonitor.shared.scanNow() }
+                if Defaults[.showLocal] { await LocalMonitor.shared.scanNow() }
+                if self.panelModel.mode == .ai && !Defaults[.showAIUsage] { self.panelModel.mode = .work }
+                if self.panelModel.mode == .local && !Defaults[.showLocal] { self.panelModel.mode = .work }
                 self.rebuildMenu()
             }
         }
@@ -144,6 +168,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Notices
+
+    /// Notices that wait for the panel to close: the panel covers the pop-up.
+    private var pendingNotices: [BarNotice] = []
+
+    /// As a macOS notification and as the menu-bar pop-up, so it is seen with either turned off.
+    private func deliver(_ notices: [BarNotice], summary: String? = nil) {
+        guard !notices.isEmpty else { return }
+        if Defaults[.notificationsEnabled] { notifier.notify(notices: notices, summary: summary) }
+        pop(notices)
+    }
+
+    /// The pop-up alone. With the panel open, the ones that point at a panel side wait for it to
+    /// close; the rest (a run, a thread) are skipped, as new items are.
+    private func pop(_ notices: [BarNotice]) {
+        guard Defaults[.showBarToast], !notices.isEmpty else { return }
+        if panel.isOpen {
+            pendingNotices += notices.filter { $0.url == nil }
+        } else {
+            toast.show(notices: notices)
+        }
+    }
+
+    private func flushNotices() {
+        guard !pendingNotices.isEmpty else { return }
+        let waiting = pendingNotices
+        pendingNotices = []
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !self.panel.isOpen else { self.pendingNotices = waiting + self.pendingNotices; return }
+            self.toast.show(notices: waiting)
+        }
+    }
+
+    private func open(_ mode: PanelMode) {
+        panelModel.mode = mode
+        panel.open()
+    }
+
+    // MARK: - Deployments
+
+    private var deployObserver: Task<Void, Never>?
+    private var deployHotKey: GlobalHotKey?
+
+    /// Vercel and Heroku run beside GitHub, on their own pace, and report back here.
+    private func startDeployments() {
+        let deploys = DeployMonitor.shared
+        deploys.onAlerts = { [weak self] alerts in
+            guard let self else { return }
+            if Defaults[.notificationsEnabled] { self.notifier.notify(deploys: alerts) }
+            if Defaults[.deployToast], !self.panel.isOpen { self.toast.show(deploys: alerts) }
+        }
+        deploys.onChange = { [weak self] in self?.rebuildMenu() }
+        deploys.githubToken = { [weak self] in await self?.session.token() }
+        workflows.githubToken = { [weak self] in await self?.session.token() }
+        workflows.onFailures = { [weak self] failures in
+            guard let self else { return }
+            if Defaults[.notificationsEnabled] { self.notifier.notify(workflows: failures) }
+            self.pop(failures.map(BarNotice.workflow))
+        }
+        AIMonitor.shared.onCapNotice = { [weak self] notice in self?.deliver([notice]) }
+        LocalMonitor.shared.onNudge = { [weak self] repos in
+            self?.deliver(repos.map { UnpushedWatch.notice($0) },
+                          summary: "\(repos.count) repositories have work only on this Mac")
+        }
+        toast.onOpenDeploys = { [weak self] in
+            self?.panelModel.mode = .deploys
+            self?.panel.open()
+        }
+        deploys.start()
+        AIMonitor.shared.onChange = { [weak self] in self?.rebuildMenu() }
+        AIMonitor.shared.start()
+        LocalMonitor.shared.onChange = { [weak self] in self?.rebuildMenu() }
+        LocalMonitor.shared.start()
+        // ⌥⌘D from anywhere: the panel, on its Deploys side (or closed again if it is open there).
+        deployHotKey = GlobalHotKey { [weak self] in
+            guard let self, !DeployMonitor.shared.connected.isEmpty else { return }
+            if self.panel.isOpen && self.panelModel.mode == .deploys { self.panel.close(); return }
+            self.panelModel.mode = .deploys
+            if !self.panel.isOpen { self.panel.open() }
+        }
+        deployObserver = Task { [weak self] in
+            for await _ in Defaults.updates([.deployHiddenProjects, .deployShowPreviews, .deployPinnedProjects,
+                                             .deployRelayURL, .herokuApps, .vercelTeamID], initial: false) {
+                guard self != nil else { return }
+                deploys.recompute()
+                deploys.startRelay()
+                deploys.refresh()
+            }
+        }
+    }
+
     // MARK: - Yenileme
 
     private func scheduleTimer() {
@@ -157,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func refresh() {
         guard refreshGate.begin() else { return }
+        DeployMonitor.shared.refresh()
 
         Task { @MainActor in
             // The panel learns the refresh ended only here: every rebuild above still saw
@@ -206,6 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let snapshot = try await GitHubClient(token: token).fetch(queries)
                 guard session.generation == generation else { return }
                 apply(snapshot, settings: settings, notes: notes)
+                workflows.check(token: token, settings: settings)
             } catch AppError.unauthorized {
                 // GitHub token'i reddetti: hata satiri degil, yeniden giris cagrisi.
                 guard session.generation == generation else { return }
@@ -234,6 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             resetAccountScopedState()
         }
         session.loaded(login: snapshot.viewer.login)
+        DeployMonitor.shared.githubLogin = snapshot.viewer.login
 
         let built = Filtering.sections(from: snapshot, settings: settings)
         let all = built.flatMap(\.items)
@@ -263,8 +382,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         seenStore.markNotified(all.map(\.url))
         try? seenStore.save()
         if Defaults[.notificationsEnabled] { notifier.notify(about: fresh) }
+
+        // Your own pull requests: news only when their state changes.
+        let watch = PullRequestWatch.changes(
+            previous: PullRequestWatch.decode(Defaults[.pullRequestSignals]),
+            open: snapshot.myPullRequests,
+            merged: snapshot.merged
+        )
+        Defaults[.pullRequestSignals] = PullRequestWatch.encode(watch.next)
+        if Defaults[.notificationsEnabled], Defaults[.notifyOwnPullRequests] {
+            notifier.notify(changes: watch.events)
+        }
+        // Comments from people. Read from every search, before filtering: a bot's thread is
+        // hidden by default, but a person answering in it is not bot activity.
+        let comments = CommentWatch.changes(
+            previous: Defaults[.commentCounts],
+            items: returned + snapshot.mentions,
+            viewer: snapshot.viewer.login
+        )
+        Defaults[.commentCounts] = comments.next
+        if Defaults[.notificationsEnabled], Defaults[.notifyComments] {
+            notifier.notify(comments: comments.events)
+        }
         // Panel aciksa yeni ogeler zaten gozunun onunde.
-        if Defaults[.showBarToast], !panel.isOpen { toast.show(fresh) }
+        if Defaults[.showBarToast], !panel.isOpen {
+            if !fresh.isEmpty { toast.show(fresh) }
+            else if Defaults[.notifyComments], !comments.events.isEmpty { toast.show(notices: comments.events.map(BarNotice.comment)) }
+        }
 
         viewer = snapshot.viewer
         social = snapshot.social
@@ -297,6 +441,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Defaults[.knownOrganizations] = []
         Defaults[.knownRepos] = [:]
         seenStore.reset()
+        Defaults[.pullRequestSignals] = [:]
+        Defaults[.commentCounts] = [:]
+        workflows.reset()
         Avatar.forget()
     }
 
@@ -306,6 +453,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let unseen = sections.filter { $0.kind != .myPullRequests }.flatMap(\.items)
             .filter { !seenStore.isSeen($0.url) }.count
         statusItem.button?.title = session.state.isSignedIn && unseen > 0 ? " \(unseen)" : ""
+        // A dot on the icon while one of your pull requests is stuck on you.
+        let deploys = DeployMonitor.shared
+        let blocked = (session.state.isSignedIn && sections.flatMap(\.items).contains { item in
+            item.authorLogin == viewer?.login
+                && [.changesRequested, .conflicts, .failing].contains(item.status(now: Date()))
+        }) || deploys.hasRecentFailure
+        if blocked != iconShowsBlocked {
+            iconShowsBlocked = blocked
+            statusItem.button?.image = StatusIcon.image(alert: blocked)
+            statusItem.button?.setAccessibilityLabel(blocked ? "Dev+ Bar, a pull request of yours needs attention" : "Dev+ Bar")
+        }
 
         let settings = Settings.fromDefaults()
         panelModel.input = PanelInput(
@@ -328,9 +486,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showEmptySections: settings.showEmptySections,
             rateLimitVisibility: settings.rateLimitVisibility,
             isSeen: { [seenStore] url in mine.contains(url) || seenStore.isSeen(url) },
-            now: Date()
+            now: Date(),
+            deploysEnabled: !deploys.connected.isEmpty,
+            aiEnabled: Defaults[.showAIUsage] && AIMonitor.shared.hasData,
+            localEnabled: Defaults[.showLocal] && LocalMonitor.shared.hasData,
+            localUnpushed: Defaults[.showLocal] ? LocalMonitor.shared.unpushedCount : 0,
+            deployIndicator: deploys.hasRecentFailure ? .failed : (deploys.hasActive ? .building : nil),
+            deploymentFor: { [byPullRequest = Self.deploymentsByPullRequest(deploys.deployments)] item in
+                byPullRequest[item.url]
+            }
         )
         panel.contentChanged()
+    }
+
+    /// The newest deployment of each pull request, by its GitHub URL.
+    static func deploymentsByPullRequest(_ list: [Deployment]) -> [String: Deployment] {
+        var result: [String: Deployment] = [:]
+        for d in list { if let url = d.pullRequestURL, result[url] == nil { result[url] = d } }
+        return result
     }
 
     // MARK: - Menu eylemleri
@@ -352,6 +525,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         seenStore.markSeen(section.items.map(\.url), at: Date())
         try? seenStore.save()
         rebuildMenu()
+    }
+
+    /// Adds the repository to the block list, or takes it off the allow list; asks first.
+    func hideRepository(_ repository: String) {
+        // An empty allow list means "watch everything": removing its last entry would do the opposite.
+        if Defaults[.repoListIsAllowList], Defaults[.repoList].count <= 1 {
+            let info = NSAlert()
+            info.messageText = "\(repository) is the only watched repository"
+            info.informativeText = "Change the list in Settings › Repositories."
+            NSApp.activate(ignoringOtherApps: true)
+            info.runModal()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Stop watching \(repository)?"
+        alert.informativeText = "Its pull requests and issues leave the panel. Settings › Repositories brings it back."
+        alert.addButton(withTitle: "Stop Watching")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if Defaults[.repoListIsAllowList] {
+            Defaults[.repoList].removeAll { $0.caseInsensitiveCompare(repository) == .orderedSame }
+        } else if !Defaults[.repoList].contains(where: { $0.caseInsensitiveCompare(repository) == .orderedSame }) {
+            Defaults[.repoList].append(repository)
+        }
     }
 
     func markAllSeen() {

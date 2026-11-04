@@ -49,18 +49,26 @@ enum ResponseParser {
 
         var truncated: Set<SectionKind> = []
 
-        func search(_ key: String, kind: ItemKind, section: SectionKind) throws -> [Item] {
+        func search(_ key: String, kind: ItemKind, section: SectionKind?, optional: Bool = false) throws -> [Item] {
             guard let object = payload[key] as? [String: Any] else {
-                if !messages.isEmpty { return [] }   // reported in `warnings`
+                if !messages.isEmpty || optional { return [] }   // reported in `warnings`
                 throw ParseError.malformed("missing \(key)")
             }
             // A node GitHub could not resolve comes back as null; skip it, keep the rest.
             let nodes = (object["nodes"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
             // Exactly 100 results all fit; only more than that leaves some out.
-            if let count = object["issueCount"] as? Int, count > searchLimit {
+            if let section, let count = object["issueCount"] as? Int, count > searchLimit {
                 truncated.insert(section)
             }
-            return nodes.compactMap { item(from: $0, kind: kind) }
+            // A mixed search says per node what it is.
+            return nodes.compactMap { node in
+                let typed: ItemKind = switch node["__typename"] as? String {
+                case "Issue": .issue
+                case "PullRequest": .pullRequest
+                default: kind
+                }
+                return item(from: node, kind: typed)
+            }
         }
 
         let prs    = try search("prs",    kind: .pullRequest, section: .pullRequests)
@@ -80,6 +88,10 @@ enum ResponseParser {
             section: .myPullRequests
         )
 
+        // Newer searches: an older fixture or response without them still parses.
+        let mentions = try search("mentions", kind: .issue, section: .mentions, optional: true)
+        let merged = try search("merged", kind: .pullRequest, section: nil, optional: true)
+
         guard let limitObject = payload["rateLimit"] as? [String: Any],
               let limit = limitObject["limit"] as? Int,
               let remaining = limitObject["remaining"] as? Int,
@@ -98,7 +110,9 @@ enum ResponseParser {
             myPullRequests: myPullRequests,
             rateLimit: RateLimit(limit: limit, remaining: remaining, resetAt: resetAt),
             truncated: truncated,
-            warnings: messages
+            warnings: messages,
+            mentions: mentions,
+            merged: merged
         )
     }
 
@@ -134,6 +148,13 @@ enum ResponseParser {
         try? iso.parse(string)
     }
 
+    /// commits(last: 1).nodes[0].commit.statusCheckRollup.state
+    private static func rollup(_ node: [String: Any]) -> String? {
+        let nodes = (node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]]
+        let commit = nodes?.first?["commit"] as? [String: Any]
+        return (commit?["statusCheckRollup"] as? [String: Any])?["state"] as? String
+    }
+
     /// Yazari olmayan oge (silinmis hesap) nil doner ve listeden dusurulur:
     /// kime ait oldugu belli olmayan bir satir gostermenin anlami yok.
     private static func item(from node: [String: Any], kind: ItemKind) -> Item? {
@@ -152,6 +173,9 @@ enum ResponseParser {
         // sonunda "[bot]". Ikisini de yakalamak gerekiyor.
         let isBot = (authorObject["__typename"] as? String) == "Bot"
             || authorLogin.hasSuffix("[bot]")
+        let commentAuthor = (((node["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first)?["author"]
+            as? [String: Any]
+        let commenter = commentAuthor?["login"] as? String
 
         return Item(
             kind: kind,
@@ -162,7 +186,15 @@ enum ResponseParser {
             createdAt: createdAt,
             isDraft: node["isDraft"] as? Bool ?? false,
             authorLogin: authorLogin,
-            authorIsBot: isBot
+            authorIsBot: isBot,
+            updatedAt: (node["updatedAt"] as? String).flatMap(parseDate),
+            reviewDecision: (node["reviewDecision"] as? String).flatMap(ReviewDecision.init(rawValue:)),
+            checks: rollup(node).flatMap(CheckState.init(rollup:)),
+            comments: ((node["comments"] as? [String: Any])?["totalCount"] as? Int) ?? 0,
+            lastCommenter: commenter,
+            lastCommenterIsBot: (commentAuthor?["__typename"] as? String) == "Bot" || commenter?.hasSuffix("[bot]") == true,
+            merge: MergeBlock(mergeable: node["mergeable"] as? String, state: node["mergeStateStatus"] as? String),
+            mergeUnknown: node["mergeable"] as? String == "UNKNOWN"
         )
     }
 }

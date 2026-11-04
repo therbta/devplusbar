@@ -12,16 +12,15 @@ import AppKit
 
 // MARK: - Palet
 
-let accent      = NSColor(srgbRed: 0.18, green: 0.72, blue: 0.42, alpha: 1)  // yesil
-let accentDeep  = NSColor(srgbRed: 0.09, green: 0.52, blue: 0.30, alpha: 1)
-let plateTop    = NSColor(srgbRed: 0.13, green: 0.15, blue: 0.18, alpha: 1)  // grafit
-let plateBottom = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.10, alpha: 1)
+let primary     = NSColor(srgbRed: 0xFC/255.0, green: 0x42/255.0, blue: 0x06/255.0, alpha: 1)  // #FC4206
+let primaryHot  = NSColor(srgbRed: 1.00, green: 0.42, blue: 0.16, alpha: 1)
+let primaryDeep = NSColor(srgbRed: 0.80, green: 0.18, blue: 0.00, alpha: 1)
+let ink         = NSColor(srgbRed: 0.10, green: 0.05, blue: 0.03, alpha: 1)
 
 // MARK: - Cizim
 
 /// macOS ikonlari kenarlarda seffaf pay birakir; 1024'luk tuvalde
-/// gorunur alan ~824 px olur. Bu oran korunmazsa ikon Dock'ta
-/// komsularindan buyuk gorunur.
+/// gorunur alan ~824 px olur.
 func drawIcon(size: CGFloat) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))
     image.lockFocus()
@@ -29,80 +28,69 @@ func drawIcon(size: CGFloat) -> NSImage {
 
     guard let context = NSGraphicsContext.current?.cgContext else { return image }
     context.setShouldAntialias(true)
-    context.interpolationQuality = .high
 
     let inset = size * 0.098
     let plateRect = CGRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
-    let radius = plateRect.width * 0.2237      // Apple'in squircle orani
+    let radius = plateRect.width * 0.2237
+    let s = plateRect.width
 
-    // Grafit zemin
+    // Turuncu zemin
     let plate = NSBezierPath(roundedRect: plateRect, xRadius: radius, yRadius: radius)
-    plate.addClip()
-    let plateGradient = NSGradient(starting: plateTop, ending: plateBottom)!
-    plateGradient.draw(in: plateRect, angle: -90)
-
-    // Ust kenarda ince isik cizgisi — duz zeminlere derinlik verir
     context.saveGState()
-    let highlight = NSBezierPath(
-        roundedRect: plateRect.insetBy(dx: size * 0.006, dy: size * 0.006),
-        xRadius: radius, yRadius: radius
-    )
-    highlight.lineWidth = size * 0.006
-    NSColor(white: 1, alpha: 0.10).setStroke()
-    highlight.stroke()
+    plate.addClip()
+    NSGradient(colors: [primaryHot, primary, primaryDeep])!.draw(in: plateRect, angle: -70)
+
+    // Ustte menu cubugu seridi — uygulamanin yasadigi yer
+    let barH = s * 0.13
+    let bar = CGRect(x: plateRect.minX, y: plateRect.maxY - barH, width: s, height: barH)
+    NSColor(white: 0, alpha: 0.18).setFill()
+    NSBezierPath(rect: bar).fill()
+    // Menu cubugunda "aktif" ikon noktasi
+    NSColor(white: 1, alpha: 0.95).setFill()
+    let pill = CGRect(x: plateRect.maxX - s * 0.27, y: bar.midY - s * 0.022, width: s * 0.13, height: s * 0.044)
+    NSBezierPath(roundedRect: pill, xRadius: pill.height / 2, yRadius: pill.height / 2).fill()
+    NSColor(white: 1, alpha: 0.45).setFill()
+    for i in 0..<2 {
+        let d = s * 0.044
+        let x = plateRect.minX + s * 0.12 + CGFloat(i) * s * 0.075
+        NSBezierPath(ovalIn: CGRect(x: x, y: bar.midY - d / 2, width: d, height: d)).fill()
+    }
+
+    // Ust kenar isigi
+    let hl = NSBezierPath(roundedRect: plateRect.insetBy(dx: size * 0.004, dy: size * 0.004), xRadius: radius, yRadius: radius)
+    hl.lineWidth = size * 0.006
+    NSColor(white: 1, alpha: 0.22).setStroke()
+    hl.stroke()
     context.restoreGState()
 
-    // MARK: Pull-request isareti
+    // MARK: Diff isareti
     //
-    // Iki dikey dal ve aralarinda bir birlesme kavsi; ucta ve diplerde
-    // daireler. Menudeki arrow.trianglehead.pull sembolunun sadelestirilmis
-    // hali — uygulamayla ayni dili konusuyor.
+    // Diff'in eklenen/silinen isaretleri: "+" ustte, "−" altta.
 
-    let stroke = size * 0.062
-    let dotR   = size * 0.058
-    let leftX  = plateRect.midX - size * 0.152
-    let rightX = plateRect.midX + size * 0.152
-    let topY   = plateRect.midY + size * 0.176
-    let botY   = plateRect.midY - size * 0.176
+    context.saveGState()
+    context.setShadow(offset: CGSize(width: 0, height: -size * 0.012), blur: size * 0.03,
+                      color: NSColor(white: 0, alpha: 0.28).cgColor)
+    context.beginTransparencyLayer(auxiliaryInfo: nil)
 
-    context.setLineCap(.round)
-    context.setLineJoin(.round)
-    context.setLineWidth(stroke)
-
-    // Sol dal: yukaridan asagi duz
-    accent.setStroke()
-    let left = NSBezierPath()
-    left.lineWidth = stroke
-    left.lineCapStyle = .round
-    left.move(to: CGPoint(x: leftX, y: topY - dotR * 0.2))
-    left.line(to: CGPoint(x: leftX, y: botY + dotR * 0.2))
-    left.stroke()
-
-    // Sag dal: yukaridan iner, sola kivrilip sol dala baglanir
-    accentDeep.setStroke()
-    let right = NSBezierPath()
-    right.lineWidth = stroke
-    right.lineCapStyle = .round
-    right.move(to: CGPoint(x: rightX, y: topY - dotR * 0.2))
-    right.line(to: CGPoint(x: rightX, y: plateRect.midY + size * 0.02))
-    right.curve(
-        to: CGPoint(x: leftX + size * 0.052, y: botY + size * 0.052),
-        controlPoint1: CGPoint(x: rightX, y: botY + size * 0.062),
-        controlPoint2: CGPoint(x: leftX + size * 0.150, y: botY + size * 0.052)
-    )
-    right.stroke()
-
-    // Daireler
-    func dot(_ x: CGFloat, _ y: CGFloat, _ color: NSColor) {
-        color.setFill()
-        NSBezierPath(ovalIn: CGRect(x: x - dotR, y: y - dotR, width: dotR * 2, height: dotR * 2)).fill()
-        plateBottom.setFill()
-        let inner = dotR * 0.42
-        NSBezierPath(ovalIn: CGRect(x: x - inner, y: y - inner, width: inner * 2, height: inner * 2)).fill()
+    // Ustte "+", altta "−": klasik diff isareti, ortalanmis
+    let cx = plateRect.midX
+    let bigStroke = s * 0.1
+    let half = s * 0.16
+    let plusY = plateRect.midY + s * 0.06
+    let minusY = plateRect.midY - s * 0.27
+    func rule(_ x0: CGFloat, _ y0: CGFloat, _ x1: CGFloat, _ y1: CGFloat) {
+        let p = NSBezierPath()
+        p.lineWidth = bigStroke
+        p.lineCapStyle = .round
+        p.move(to: CGPoint(x: x0, y: y0)); p.line(to: CGPoint(x: x1, y: y1))
+        NSColor.white.setStroke(); p.stroke()
     }
-    dot(leftX,  topY, accent)
-    dot(rightX, topY, accentDeep)
-    dot(leftX,  botY, accent)
+    rule(cx - half, plusY, cx + half, plusY)
+    rule(cx, plusY - half, cx, plusY + half)
+    rule(cx - half, minusY, cx + half, minusY)
+
+    context.endTransparencyLayer()
+    context.restoreGState()
 
     return image
 }
