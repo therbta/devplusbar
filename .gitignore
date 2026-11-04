@@ -3,7 +3,7 @@
 *.xcodeproj
 .DS_Store
 build/
-Packaging/GHBar_MAS.provisionprofile
+Packaging/Dev+ Bar_MAS.provisionprofile
 .build-mas/
 .wrangler/
 site/install.sh

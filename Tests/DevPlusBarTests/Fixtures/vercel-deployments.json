@@ -1,0 +1,7 @@
+{"deployments":[
+ {"uid":"dpl_ready","name":"web-app","url":"web-app-abc.vercel.app","created":1761998400000,"ready":1761998502000,"readyState":"READY","target":"production","projectId":"prj_1","inspectorUrl":"https://vercel.com/acme/web-app/dpl_ready","creator":{"username":"alice","githubLogin":"alice"},"meta":{"githubCommitSha":"a1b2c3d4e5f6","githubCommitRef":"main","githubCommitMessage":"Fix checkout tax (#42)\n\nbody","githubCommitOrg":"acme","githubCommitRepo":"web"}},
+ {"uid":"dpl_building","name":"web-app","url":"web-app-def.vercel.app","created":1761999000000,"state":"BUILDING","target":null,"creator":{"username":"bob"},"meta":{"githubCommitSha":"ffff","githubPrId":"57","githubCommitOrg":"acme","githubCommitRepo":"web"}},
+ {"uid":"dpl_err","name":"docs","url":"docs-x.vercel.app","created":1761990000000,"ready":1761990060000,"readyState":"ERROR","target":"production","errorMessage":"Command \"npm run build\" exited with 1"},
+ {"uid":"dpl_cancel","name":"docs","created":1761980000000,"readyState":"CANCELED"},
+ {"name":"no-id"}
+]}

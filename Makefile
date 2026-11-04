@@ -1,34 +1,41 @@
-# GHBar — derleme, paketleme, imzalama, noterleme, yayin
+# Dev+ Bar — derleme, paketleme, imzalama, noterleme, yayin
 #
 #   make            derle
-#   make bundle     GHBar.app olustur (imzasiz)
+#   make bundle     Dev+ Bar.app olustur (imzasiz)
 #   make sign       Developer ID ile imzala
 #   make notarize   Apple'a noterlet ve staple et
 #   make zip        dagitilabilir arsiv
 #   make release    yukaridakilerin hepsi, sirayla
 #   make publish    GitHub Release + Homebrew cask
-#   make site       ghbar.cobanov.dev'yi (install.sh dahil) yayinla
+#   make site       devplusbar.pages.dev'yi (install.sh dahil) yayinla
 #   make install    /Applications'a kur ve baslat
 #   make test       testler
 #   make clean
 
-VERSION     := 0.3.3
-APP         := GHBar
-BUNDLE_ID   := run.cobanov.ghbar
+VERSION     := 0.5.0
+APP         := DevPlusBar
+APP_DISPLAY := Dev+ Bar
+TARGET      := DevPlusBar
+BUNDLE_ID   := run.therbta.devplusbar
 MIN_MACOS   := 14.0
+# Release policy:
+# - Default (strict): make release && make publish
+# - Emergency only (not notarized): make release SKIP_NOTARIZE=1 && make publish ALLOW_UNNOTARIZED_PUBLISH=1
+SKIP_NOTARIZE ?= 0
+ALLOW_UNNOTARIZED_PUBLISH ?= 0
 
 BUILD_DIR   := build
 APP_BUNDLE  := $(BUILD_DIR)/$(APP).app
 CONTENTS    := $(APP_BUNDLE)/Contents
-BINARY      := .build/release/$(APP)
+BINARY      := .build/release/$(TARGET)
 ICONSET     := $(BUILD_DIR)/$(APP).iconset
 ICNS        := $(BUILD_DIR)/$(APP).icns
 ZIP         := $(BUILD_DIR)/$(APP)-$(VERSION)-macos.zip
 
 # Imzalama kimligi. security find-identity -v -p codesigning ile listelenir.
-SIGN_ID     := Developer ID Application: AHMET MERT COBANOGLU (6U58AKY6F8)
+SIGN_ID     := Developer ID Application: VERMONT EMPLOYMENT AGENCY LLC (Y95SC97WTW)
 # xcrun notarytool store-credentials ile kaydedilen profil adi.
-NOTARY_PROFILE := ghbar
+NOTARY_PROFILE := devplusbar
 # Ya da App Store Connect API anahtari: make notarize NOTARY_KEY_ID=... NOTARY_ISSUER=...
 # Anahtar ~/.appstoreconnect/private_keys/AuthKey_<id>.p8 konumunda olmali.
 NOTARY_KEY_ID ?=
@@ -37,7 +44,7 @@ NOTARY_AUTH = $(if $(NOTARY_KEY_ID),--key "$(HOME)/.appstoreconnect/private_keys
 # install.sh surumden bagimsiz bu adi indirir (releases/latest/download/...).
 LATEST_ZIP  := $(BUILD_DIR)/$(APP)-macos.zip
 
-.PHONY: all build test icon bundle sign notarize zip release install clean run publish tap site check build-mas bundle-mas sign-mas pkg
+.PHONY: all build test icon bundle sign notarize zip release install clean run publish tap site check build-mas bundle-mas sign-mas pkg preflight-release release-policy-check
 
 all: build
 
@@ -48,11 +55,11 @@ test:
 	swift test
 
 run:
-	swift run $(APP)
+	swift run $(TARGET)
 
 # App Store ekran goruntuleri — gercek SwiftUI gorunumlerinden, 2880x1800.
 screens: build
-	.build/release/$(APP) --render-screens $(BUILD_DIR)/screens
+	.build/release/$(TARGET) --render-screens $(BUILD_DIR)/screens
 
 # --- Ikon ---------------------------------------------------------------
 # AppKit ile programatik ciziliyor; harici cizim araci gerekmiyor.
@@ -75,8 +82,8 @@ bundle: build $(ICNS)
 	@# Iki cagri: bu macOS'taki PlistBuddy 13'ten fazla -c komutuyla
 	@# SIGABRT atiyor (olculdu: 13 ok, 14+ Abort trap 6).
 	@/usr/libexec/PlistBuddy -c "Clear dict" \
-	  -c "Add :CFBundleName string $(APP)" \
-	  -c "Add :CFBundleDisplayName string $(APP)" \
+	  -c "Add :CFBundleName string $(APP_DISPLAY)" \
+	  -c "Add :CFBundleDisplayName string $(APP_DISPLAY)" \
 	  -c "Add :CFBundleIdentifier string $(BUNDLE_ID)" \
 	  -c "Add :CFBundleExecutable string $(APP)" \
 	  -c "Add :CFBundleIconFile string $(APP)" \
@@ -89,7 +96,6 @@ bundle: build $(ICNS)
 	  -c "Add :LSUIElement bool true" \
 	  -c "Add :LSApplicationCategoryType string public.app-category.developer-tools" \
 	  -c "Add :ITSAppUsesNonExemptEncryption bool false" \
-	  -c "Add :NSHumanReadableCopyright string 'Copyright © 2026 Mert Cobanov. MIT License.'" \
 	  -c "Add :NSSupportsAutomaticTermination bool false" \
 	  -c "Add :NSSupportsSuddenTermination bool false" \
 	  $(CONTENTS)/Info.plist >/dev/null
@@ -104,7 +110,11 @@ bundle: build $(ICNS)
 # eski imzalar gecerli kalir.
 
 sign: bundle
-	@security unlock-keychain -p "$$(cat $(HOME)/.cobanov-signing/.kcpass)" $(SIGN_KEYCHAIN)
+	@if [ -f "$(SIGN_KCPASS)" ]; then \
+	  security unlock-keychain -p "$$(cat $(SIGN_KCPASS))" "$(SIGN_KEYCHAIN)"; \
+	else \
+	  echo "UYARI: $(SIGN_KCPASS) yok; acik keychain ile devam ediliyor"; \
+	fi
 	codesign --force --options runtime --timestamp \
 	  --keychain "$(SIGN_KEYCHAIN)" --sign "$(SIGN_ID)" \
 	  $(CONTENTS)/MacOS/$(APP)
@@ -132,7 +142,53 @@ zip:
 	@echo "arsiv: $(ZIP)"
 	@shasum -a 256 $(ZIP)
 
-release: test notarize
+preflight-release:
+	@echo "--- release preflight ---"
+	@security find-identity -v -p codesigning | grep -F "$(SIGN_ID)" >/dev/null 2>&1 || { \
+	  echo "ERROR: signing identity yok: $(SIGN_ID)"; \
+	  exit 1; \
+	}
+	@if [ -z "$(NOTARY_KEY_ID)" ] && [ -z "$(NOTARY_ISSUER)" ]; then \
+	  xcrun notarytool history --keychain-profile "$(NOTARY_PROFILE)" >/dev/null 2>&1 || { \
+	    echo "ERROR: notary profile yok: $(NOTARY_PROFILE)"; \
+	    exit 1; \
+	  }; \
+	else \
+	  test -n "$(NOTARY_KEY_ID)" && test -n "$(NOTARY_ISSUER)" || { \
+	    echo "ERROR: NOTARY_KEY_ID ve NOTARY_ISSUER birlikte ayarlanmalidir"; \
+	    exit 1; \
+	  }; \
+	  test -f "$(HOME)/.appstoreconnect/private_keys/AuthKey_$(NOTARY_KEY_ID).p8" || { \
+	    echo "ERROR: App Store Connect key yok: $(HOME)/.appstoreconnect/private_keys/AuthKey_$(NOTARY_KEY_ID).p8"; \
+	    exit 1; \
+	  }; \
+	fi
+	@echo "PASS: release preflight ok"
+
+release-policy-check:
+	@grep -q "Default (strict): make release && make publish" Makefile || { \
+	  echo "ERROR: Makefile strict-default release wording missing"; \
+	  exit 1; \
+	}
+	@grep -q "Emergency only (not notarized): make release SKIP_NOTARIZE=1 && make publish ALLOW_UNNOTARIZED_PUBLISH=1" Makefile || { \
+	  echo "ERROR: Makefile fallback wording missing"; \
+	  exit 1; \
+	}
+	@grep -q "Do not use fallback flags as default release policy" README.md || { \
+	  echo "ERROR: README.md fallback policy warning missing"; \
+	  exit 1; \
+	}
+	@echo "PASS: release policy docs are strict by default"
+
+release: test
+	@if [ "$(SKIP_NOTARIZE)" = "1" ]; then \
+	  echo "UYARI: notarize atlandi (SKIP_NOTARIZE=1)"; \
+	  $(MAKE) sign; \
+	  $(MAKE) zip; \
+	else \
+	  $(MAKE) preflight-release; \
+	  $(MAKE) notarize; \
+	fi
 	@echo
 	@echo "yayina hazir: $(ZIP)"
 	@shasum -a 256 $(ZIP)
@@ -145,38 +201,43 @@ release: test notarize
 
 publish:
 	@test -f $(ZIP) || { echo "$(ZIP) yok — once 'make notarize' calistir"; exit 1; }
-	@echo "--- noterleme dogrulamasi ---"
-	@spctl --assess --type execute --verbose=4 $(APP_BUNDLE) 2>&1 | grep -q accepted \
-	  || { echo "HATA: paket Gatekeeper'dan gecmiyor, yayinlanmayacak"; exit 1; }
+	@if [ "$(ALLOW_UNNOTARIZED_PUBLISH)" = "1" ]; then \
+	  echo "UYARI: Gatekeeper dogrulamasi atlandi (ALLOW_UNNOTARIZED_PUBLISH=1)"; \
+	else \
+	  echo "--- noterleme dogrulamasi ---"; \
+	  spctl --assess --type execute --verbose=4 $(APP_BUNDLE) 2>&1 | grep -q accepted \
+	    || { echo "HATA: paket Gatekeeper'dan gecmiyor, yayinlanmayacak"; exit 1; }; \
+	fi
 	cp $(ZIP) $(LATEST_ZIP)
 	gh release create v$(VERSION) $(ZIP) $(LATEST_ZIP) \
-	  --title "GHBar $(VERSION)" \
+	  --title "$(APP_DISPLAY) $(VERSION)" \
 	  --notes-file docs/release-notes/v$(VERSION).md \
-	  --repo cobanov/ghbar
+	  --repo therbta/devplusbar
 	$(MAKE) tap
 
 # Homebrew cask'ini yeni surum + sha256 ile tap'e gonderir. Ayri clone yok:
 # gh api ile tek dosya PUT ediliyor.
 tap:
+	@test -f $(ZIP) || { echo "$(ZIP) yok — once 'make release' veya 'make zip' calistir"; exit 1; }
 	@SHA=$$(shasum -a 256 $(ZIP) | cut -d' ' -f1); \
 	sed -e "s/{{VERSION}}/$(VERSION)/g" -e "s/{{SHA256}}/$$SHA/g" \
-	  Packaging/ghbar.rb.template > $(BUILD_DIR)/ghbar.rb; \
-	B64=$$(base64 -i $(BUILD_DIR)/ghbar.rb); \
-	EXISTING=$$(gh api repos/cobanov/homebrew-tap/contents/Casks/ghbar.rb --jq .sha 2>/dev/null || true); \
+	  Packaging/devplusbar.rb.template > $(BUILD_DIR)/devplusbar.rb; \
+	B64=$$(base64 -i $(BUILD_DIR)/devplusbar.rb); \
+	EXISTING=$$(gh api repos/therbta/homebrew-tap/contents/Casks/devplusbar.rb --jq .sha 2>/dev/null || true); \
 	if [ -n "$$EXISTING" ]; then \
-	  gh api -X PUT repos/cobanov/homebrew-tap/contents/Casks/ghbar.rb \
-	    -f message="ghbar $(VERSION)" -f content="$$B64" -f sha="$$EXISTING" > /dev/null; \
+	  gh api -X PUT repos/therbta/homebrew-tap/contents/Casks/devplusbar.rb \
+	    -f message="devplusbar $(VERSION)" -f content="$$B64" -f sha="$$EXISTING" > /dev/null; \
 	else \
-	  gh api -X PUT repos/cobanov/homebrew-tap/contents/Casks/ghbar.rb \
-	    -f message="ghbar $(VERSION)" -f content="$$B64" > /dev/null; \
+	  gh api -X PUT repos/therbta/homebrew-tap/contents/Casks/devplusbar.rb \
+	    -f message="devplusbar $(VERSION)" -f content="$$B64" > /dev/null; \
 	fi; \
 	echo "tap guncellendi: brew install hazir"
 
-# ghbar.cobanov.dev (Cloudflare Pages). install.sh oradan sunuluyor:
-#   curl -fsSL https://ghbar.cobanov.dev/install.sh | sh
+# devplusbar.pages.dev (Cloudflare Pages). install.sh oradan sunuluyor:
+#   curl -fsSL https://devplusbar.pages.dev/install.sh | sh
 site:
 	cp install.sh site/install.sh
-	wrangler pages deploy site --project-name ghbar --branch main --commit-dirty=true
+	wrangler pages deploy site --project-name devplusbar --branch main --commit-dirty=true
 
 # --- Kurulum ------------------------------------------------------------
 
@@ -199,13 +260,14 @@ MAS_DIR       := $(BUILD_DIR)/mas
 MAS_BUNDLE    := $(MAS_DIR)/$(APP).app
 MAS_CONTENTS  := $(MAS_BUNDLE)/Contents
 # Isim yerine SHA-1: ayni isimli iki Distribution sertifikasi var (login
-# keychain'deki eski + cobanov-signing'deki yeni); isim ambiguous hatasi verir.
+# keychain'deki eski + therbta-signing'deki yeni); isim ambiguous hatasi verir.
 MAS_SIGN_ID   := 2632468CDF18C5FAFC4A6C2CC26EC610EAE84922
 MAS_PKG_ID    := 3rd Party Mac Developer Installer: AHMET MERT COBANOGLU (6U58AKY6F8)
-MAS_PROFILE   := Packaging/GHBar_MAS.provisionprofile
-# Tek imza keychain'i (2026-10-16'dan beri, ghbar-signing silindi). Sifresi
-# ~/.cobanov-signing/.kcpass ve Obsidian passwords.md'de.
-SIGN_KEYCHAIN := $(HOME)/Library/Keychains/cobanov-signing.keychain-db
+MAS_PROFILE   := Packaging/DevPlusBar_MAS.provisionprofile
+# Tek imza keychain'i (2026-10-16'dan beri, devplusbar-signing silindi). Sifresi
+# ~/.therbta-signing/.kcpass ve Obsidian passwords.md'de.
+SIGN_KEYCHAIN := $(if $(wildcard $(HOME)/Library/Keychains/therbta-signing.keychain-db),$(HOME)/Library/Keychains/therbta-signing.keychain-db,$(HOME)/Library/Keychains/login.keychain-db)
+SIGN_KCPASS   := $(HOME)/.therbta-signing/.kcpass
 PKG           := $(BUILD_DIR)/$(APP)-$(VERSION)-mas.pkg
 
 # Iki varyanti da derle + testler. Yayin oncesi tek dogrulama kapisi
@@ -219,13 +281,13 @@ build-mas:
 bundle-mas: build-mas $(ICNS)
 	@rm -rf $(MAS_BUNDLE)
 	@mkdir -p $(MAS_CONTENTS)/MacOS $(MAS_CONTENTS)/Resources
-	cp $(MAS_SCRATCH)/release/$(APP) $(MAS_CONTENTS)/MacOS/$(APP)
+	cp $(MAS_SCRATCH)/release/$(TARGET) $(MAS_CONTENTS)/MacOS/$(APP)
 	cp $(ICNS) $(MAS_CONTENTS)/Resources/$(APP).icns
 	@printf '%s' 'APPL????' > $(MAS_CONTENTS)/PkgInfo
 	@# PlistBuddy 13-komut siniri: iki cagri (bundle hedefindeki notla ayni).
 	@/usr/libexec/PlistBuddy -c "Clear dict" \
-	  -c "Add :CFBundleName string $(APP)" \
-	  -c "Add :CFBundleDisplayName string $(APP)" \
+	  -c "Add :CFBundleName string $(APP_DISPLAY)" \
+	  -c "Add :CFBundleDisplayName string $(APP_DISPLAY)" \
 	  -c "Add :CFBundleIdentifier string $(BUNDLE_ID)" \
 	  -c "Add :CFBundleExecutable string $(APP)" \
 	  -c "Add :CFBundleIconFile string $(APP)" \
@@ -238,7 +300,6 @@ bundle-mas: build-mas $(ICNS)
 	  -c "Add :LSUIElement bool true" \
 	  -c "Add :LSApplicationCategoryType string public.app-category.developer-tools" \
 	  -c "Add :ITSAppUsesNonExemptEncryption bool false" \
-	  -c "Add :NSHumanReadableCopyright string 'Copyright © 2026 Mert Cobanov.'" \
 	  $(MAS_CONTENTS)/Info.plist >/dev/null
 	@test -f $(MAS_PROFILE) \
 	  && cp $(MAS_PROFILE) $(MAS_CONTENTS)/embedded.provisionprofile \
@@ -247,10 +308,10 @@ bundle-mas: build-mas $(ICNS)
 
 sign-mas: bundle-mas
 	codesign --force --timestamp \
-	  --entitlements Packaging/GHBar-MAS.entitlements \
+	  --entitlements Packaging/DevPlusBar-MAS.entitlements \
 	  --keychain "$(SIGN_KEYCHAIN)" --sign "$(MAS_SIGN_ID)" $(MAS_CONTENTS)/MacOS/$(APP)
 	codesign --force --timestamp \
-	  --entitlements Packaging/GHBar-MAS.entitlements \
+	  --entitlements Packaging/DevPlusBar-MAS.entitlements \
 	  --keychain "$(SIGN_KEYCHAIN)" --sign "$(MAS_SIGN_ID)" $(MAS_BUNDLE)
 	codesign --verify --deep --strict $(MAS_BUNDLE)
 

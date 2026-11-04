@@ -1,0 +1,97 @@
+import Foundation
+import Defaults
+
+/// Tum ayar anahtarlari tek yerde (spec §8). Anahtar adlari diskte
+/// UserDefaults alan adi olur; degistirmek kullanicinin ayarini sifirlar.
+extension Defaults.Keys {
+    static let accounts = Key<[String]>("accounts", default: ["@me"])
+    static let organizations = Key<[String]>("organizations", default: [])
+    /// Uyelik listesi; Ayarlar ve menu secicisi bundan dolar. Her yenilemede
+    /// `viewer.organizations` ile guncellenir.
+    static let knownOrganizations = Key<[String]>("knownOrganizations", default: [])
+    static let repoList = Key<[String]>("repoList", default: [])
+    static let repoListIsAllowList = Key<Bool>("repoListIsAllowList", default: false)
+    static let showBots = Key<Bool>("showBots", default: false)
+    static let showDrafts = Key<Bool>("showDrafts", default: true)
+    static let showPullRequests = Key<Bool>("showPullRequests", default: true)
+    static let showIssues = Key<Bool>("showIssues", default: true)
+    static let showReviewRequested = Key<Bool>("showReviewRequested", default: true)
+    static let showChangesRequested = Key<Bool>("showChangesRequested", default: true)
+    static let showMyPullRequests = Key<Bool>("showMyPullRequests", default: true)
+    static let showMentions = Key<Bool>("showMentions", default: true)
+    /// Last known state of each of your open pull requests (URL -> PRSignal raw values), to
+    /// notify when it changes.
+    static let pullRequestSignals = Key<[String: [String]]>("pullRequestSignals", default: [:])
+    static let notifyOwnPullRequests = Key<Bool>("notifyOwnPullRequests", default: true)
+    /// A workflow on the default branch of a repository you own starting to fail.
+    static let notifyWorkflowFailures = Key<Bool>("notifyWorkflowFailures", default: true)
+    /// A person, not you and not a bot, commenting on a thread Dev+ Bar shows.
+    static let notifyComments = Key<Bool>("notifyComments", default: true)
+    /// Comment count of each open thread when last seen (URL -> count).
+    static let commentCounts = Key<[String: Int]>("commentCounts", default: [:])
+    /// Last verdict of each watched workflow ("owner/repo#workflowID" -> failing), to notify
+    /// only when one turns red.
+    static let workflowVerdicts = Key<[String: Bool]>("workflowVerdicts", default: [:])
+    /// Workflows disabled from Dev+ Bar ("owner/repo#workflowID" -> when, seconds since 1970);
+    /// their runs from before then no longer count as red.
+    static let disabledWorkflows = Key<[String: Double]>("disabledWorkflows", default: [:])
+    static let showEmptySections = Key<Bool>("showEmptySections", default: false)
+    static let rateLimitVisibility = Key<String>("rateLimitVisibility",
+                                                 default: RateLimitVisibility.whenLow.rawValue)
+    static let refreshMinutes = Key<Int>("refreshMinutes", default: 5)
+    static let repoGroupThreshold = Key<Int>("repoGroupThreshold", default: 3)
+    static let notificationsEnabled = Key<Bool>("notificationsEnabled", default: true)
+    /// Yeni ogede menu cubugu ikonunun altindan inen kutu (BarToast).
+    static let showBarToast = Key<Bool>("showBarToast", default: true)
+    /// Son cekimlerde oge ureten repolar (repo -> oge sayisi). Ayarlar >
+    /// Repositories bu listeden dolar; kullanici repo adini elle yazmak
+    /// zorunda kalmaz (spec §8: yazim hatasi sessizce hicbir seyi filtrelemez).
+    static let knownRepos = Key<[String: Int]>("knownRepos", default: [:])
+    static let signedInLogin = Key<String?>("signedInLogin", default: nil)
+    /// `AuthSource` raw value: where the token comes from. nil until one is adopted.
+    static let authSource = Key<String?>("authSource", default: nil)
+    /// Set by Sign Out, so a signed-in `gh` is not picked up again behind the user's back.
+    static let signedOutByUser = Key<Bool>("signedOutByUser", default: false)
+    static let includePrivateRepos = Key<Bool>("includePrivateRepos", default: true)
+    /// Yeni surum kontrolu (MAS disinda). Gunde en fazla bir kez.
+    static let checkForUpdates = Key<Bool>("checkForUpdates", default: true)
+    static let lastUpdateCheck = Key<Date?>("lastUpdateCheck", default: nil)
+    /// "Skip This Version" ile atlanan surum; daha yenisi cikinca yine sorulur.
+    static let skippedVersion = Key<String?>("skippedVersion", default: nil)
+}
+
+extension Settings {
+    /// Saf Settings struct'i korunur: Query/Filtering test edilebilir kalir,
+    /// Defaults yalnizca kenarda okunur.
+    static func fromDefaults() -> Settings {
+        var settings = Settings()
+        let accounts = Defaults[.accounts].filter {
+            !$0.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        settings.accounts = accounts.isEmpty ? ["@me"] : accounts
+        settings.organizations = Defaults[.organizations].filter {
+            !$0.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        settings.repoList = Defaults[.repoList]
+        settings.repoListIsAllowList = Defaults[.repoListIsAllowList]
+        settings.showBots = Defaults[.showBots]
+        settings.showDrafts = Defaults[.showDrafts]
+        settings.showPullRequests = Defaults[.showPullRequests]
+        settings.showIssues = Defaults[.showIssues]
+        settings.showReviewRequested = Defaults[.showReviewRequested]
+        settings.showChangesRequested = Defaults[.showChangesRequested]
+        settings.showMyPullRequests = Defaults[.showMyPullRequests]
+        settings.showMentions = Defaults[.showMentions]
+        settings.showEmptySections = Defaults[.showEmptySections]
+        settings.rateLimitVisibility =
+            RateLimitVisibility(rawValue: Defaults[.rateLimitVisibility]) ?? .whenLow
+        settings.repoGroupThreshold = Defaults[.repoGroupThreshold]
+        return settings
+    }
+
+    /// Zamanlayici araligi, saniye. Taban 1 dakika: 0 veya negatif deger
+    /// kendini bogan bir dongu yaratirdi.
+    static func refreshInterval() -> TimeInterval {
+        TimeInterval(max(1, Defaults[.refreshMinutes])) * 60
+    }
+}

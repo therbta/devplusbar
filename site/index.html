@@ -3,20 +3,21 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>GHBar — Pull requests and issues in your macOS menu bar</title>
-<meta name="description" content="GHBar keeps the pull requests and issues people open on your repositories in the macOS menu bar. Free, open source, one API call per refresh." />
+<title>Dev+ Bar — Pull requests and issues in your macOS menu bar</title>
+<meta name="description"
+  content="Dev+ Bar keeps the pull requests and issues people open on your repositories in the macOS menu bar. Free, open source, one API call per refresh." />
 
 <meta property="og:type" content="website" />
-<meta property="og:title" content="GHBar — Pull requests and issues in your menu bar" />
+<meta property="og:title" content="Dev+ Bar — Pull requests and issues in your menu bar" />
 <meta property="og:description" content="The contributions people send you, without the rest of the notification inbox." />
-<meta property="og:url" content="https://ghbar.cobanov.dev/" />
-<meta property="og:image" content="https://ghbar.cobanov.dev/assets/og.png" />
+<meta property="og:url" content="https://devplusbar.pages.dev/" />
+<meta property="og:image" content="https://devplusbar.pages.dev/assets/og.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:image" content="https://ghbar.cobanov.dev/assets/og.png" />
+<meta name="twitter:image" content="https://devplusbar.pages.dev/assets/og.png" />
 
-<link rel="icon" type="image/png" href="/assets/ghbar-icon.png" />
+<link rel="icon" type="image/png" href="/assets/devplusbar-icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -24,9 +25,9 @@
 
 <script
   async
-  src="https://oa-c.cobanov.run/oa.js"
+  src="https://oa-c.therbta.run/oa.js"
   data-key="oa_pk_AJVuDisJ3WHs0pIKr8MQXrik6nCMRQqT"
-  data-collector="https://oa-c.cobanov.run"
+  data-collector="https://oa-c.therbta.run"
 ></script>
 </head>
 <body>
@@ -34,14 +35,13 @@
 <header class="nav-wrap">
   <nav class="nav glass">
     <a class="brand" href="/">
-      <img src="/assets/ghbar-icon.png" alt="" width="28" height="28" />
-      <span>GHBar</span>
+      <img src="/assets/devplusbar-icon.png" alt="" width="28" height="28" />
+      <span>Dev+ Bar</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
       <a href="#install">Install</a>
-      <a href="https://github.com/cobanov/ghbar">GitHub</a>
     </div>
   </nav>
 </header>
@@ -60,12 +60,12 @@
       </p>
 
       <div class="cta-row">
-        <a class="btn btn-primary" href="https://github.com/cobanov/ghbar/releases/latest">
+        <a class="btn btn-primary" href="#install">
           <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M8 1a.75.75 0 0 1 .75.75v6.69l1.72-1.72a.75.75 0 1 1 1.06 1.06l-3 3a.75.75 0 0 1-1.06 0l-3-3a.75.75 0 0 1 1.06-1.06l1.72 1.72V1.75A.75.75 0 0 1 8 1ZM2.75 12a.75.75 0 0 1 .75.75v.75h9v-.75a.75.75 0 0 1 1.5 0v1.5a.75.75 0 0 1-.75.75h-10.5a.75.75 0 0 1-.75-.75v-1.5a.75.75 0 0 1 .75-.75Z"/></svg>
           Download for macOS
         </a>
-        <button class="btn btn-ghost copy" data-copy="brew install --cask cobanov/tap/ghbar">
-          <code>brew install --cask cobanov/tap/ghbar</code>
+        <button class="btn btn-ghost copy" data-copy="brew install --cask therbta/tap/devplusbar">
+          <code>brew install --cask therbta/tap/devplusbar</code>
           <span class="copy-label">Copy</span>
         </button>
       </div>
@@ -77,9 +77,9 @@
 
     <!--
       Urun gorseli: panel, uygulamanin kendisinden ornek veriyle cizildi
-      (GHBar --render-panel). Panel degisince yeniden cizilmeli.
+      (Dev+ Bar --render-panel). Panel degisince yeniden cizilmeli.
     -->
-    <div class="hero-shot" aria-label="GHBar panel preview">
+    <div class="hero-shot" aria-label="Dev+ Bar panel preview">
       <div class="menubar glass">
         <span class="mb-dot"></span>
         <span class="mb-item">100%</span>
@@ -89,7 +89,8 @@
         <span class="mb-item">21:04</span>
       </div>
 
-      <img class="panel-shot" src="/assets/panel.png" width="380" height="433" alt="The GHBar panel: tabs for reviews, pull requests and issues, each row with its author" />
+      <img class="panel-shot" src="/assets/panel.png" width="380" height="433"
+        alt="The Dev+ Bar panel: tabs for reviews, pull requests and issues, each row with its author" />
     </div>
   </div>
 </section>
@@ -175,8 +176,8 @@ is:pr    is:open author:@me                           <span class="c">→ My PRs
       <article class="card glass">
         <h3>Open source</h3>
         <p>
-          MIT licensed. Read the query it sends, the filter it applies and the
-          file it writes — all of it is in the repository.
+          Read the query it sends, the filter it applies and the file it writes
+          — all of it is in the repository.
         </p>
       </article>
     </div>
@@ -191,26 +192,26 @@ is:pr    is:open author:@me                           <span class="c">→ My PRs
     <div class="card glass install-main">
       <h3>Terminal</h3>
       <p>Downloads the latest release, checks that Apple notarized it and puts
-      GHBar in Applications. Run it again to update.</p>
-      <button class="btn btn-ghost copy" data-copy="curl -fsSL https://ghbar.cobanov.dev/install.sh | sh">
-        <code>curl -fsSL https://<wbr>ghbar.cobanov.dev/<wbr>install.sh | sh</code>
+      Dev+ Bar in Applications. Run it again to update.</p>
+      <button class="btn btn-ghost copy" data-copy="curl -fsSL https://devplusbar.pages.dev/install.sh | sh">
+        <code>curl -fsSL https://<wbr>devplusbar.pages.dev/<wbr>install.sh | sh</code>
         <span class="copy-label">Copy</span>
       </button>
     </div>
 
     <div class="card glass">
       <h3>Homebrew</h3>
-      <p>Update later with <code>brew upgrade --cask ghbar</code>.</p>
-      <button class="btn btn-ghost copy" data-copy="brew install --cask cobanov/tap/ghbar">
-        <code>brew install --cask cobanov/tap/ghbar</code>
+      <p>Update later with <code>brew upgrade --cask devplusbar</code>.</p>
+      <button class="btn btn-ghost copy" data-copy="brew install --cask therbta/tap/devplusbar">
+        <code>brew install --cask therbta/tap/devplusbar</code>
         <span class="copy-label">Copy</span>
       </button>
     </div>
 
     <div class="card glass">
       <h3>Direct download</h3>
-      <p>Unzip and drag <strong>GHBar.app</strong> into Applications.</p>
-      <a class="btn btn-primary small" href="https://github.com/cobanov/ghbar/releases/latest">
+      <p>Unzip and drag <strong>Dev+ Bar.app</strong> into Applications.</p>
+      <a class="btn btn-primary small" href="#install">
         Latest release
       </a>
     </div>
@@ -222,7 +223,7 @@ is:pr    is:open author:@me                           <span class="c">→ My PRs
       <li><strong>macOS 14</strong> (Sonoma) or newer</li>
     </ul>
     <p class="fineprint">
-      GHBar signs in with GitHub's device flow — no account to create. Already use
+      Dev+ Bar signs in with GitHub's device flow — no account to create. Already use
       the <a href="https://cli.github.com">GitHub CLI</a> (<code>gh</code>)? The welcome
       window offers to continue as that account in one click.
     </p>
@@ -234,18 +235,12 @@ is:pr    is:open author:@me                           <span class="c">→ My PRs
 <footer>
   <div class="container footer-inner">
     <div class="footer-brand">
-      <img src="/assets/ghbar-icon.png" alt="" width="24" height="24" />
-      <span>GHBar</span>
+      <img src="/assets/devplusbar-icon.png" alt="" width="24" height="24" />
+      <span>Dev+ Bar</span>
     </div>
     <div class="footer-links">
-      <a href="https://github.com/cobanov/ghbar">GitHub</a>
-      <a href="https://github.com/cobanov/ghbar/releases">Releases</a>
-      <a href="https://github.com/cobanov/ghbar/blob/main/LICENSE">MIT License</a>
-      <a href="https://github.com/cobanov/ghbar/issues">Report an issue</a>
       <a href="/privacy">Privacy</a>
     </div>
-    <p class="footer-note">Built by <a href="https://github.com/cobanov">Mert Cobanov</a></p>
-    <p class="footer-note">GHBar is an independent open-source project. It is not affiliated with, endorsed by or sponsored by GitHub, Inc. &ldquo;GitHub&rdquo; is a trademark of GitHub, Inc.</p>
   </div>
 </footer>
 

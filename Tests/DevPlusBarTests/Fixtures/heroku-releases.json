@@ -1,0 +1,4 @@
+[
+ {"id":"r3","version":43,"status":"succeeded","description":"Set FEATURE_X config vars","created_at":"2026-11-01T10:30:00Z","updated_at":"2026-11-01T10:30:01Z","current":true,"user":{"email":"alice@example.com"},"slug":{"id":"s2"}},
+ {"id":"r2","version":42,"status":"succeeded","description":"Deploy abc123","created_at":"2026-11-01T10:02:00Z","updated_at":"2026-11-01T10:02:20Z","current":false,"user":{"email":"alice@example.com"},"slug":{"id":"s2"}}
+]

@@ -1,0 +1,200 @@
+import Foundation
+
+enum ParseError: Error, Equatable {
+    case malformed(String)
+    case graphQL(String)
+    /// GraphQL's primary rate limit answers 200 with an error of this type.
+    case rateLimited
+}
+
+enum ResponseParser {
+
+    /// GitHub aramanin dondurdugu en fazla sonuc. Bu sayiya dayanan bir arama
+    /// kirpilmis demektir ve kullaniciya soylenmesi gerekir.
+    static let searchLimit = 100
+
+    static func parse(_ data: Data) throws -> Snapshot {
+        let decoded = try? JSONSerialization.jsonObject(with: data)
+        guard let root = decoded as? [String: Any] else {
+            throw ParseError.malformed("root is not an object")
+        }
+
+        // GitHub can return complete data alongside errors about one part of it, such as an
+        // organization behind an IP allow list. Only a missing `data` fails the refresh; the
+        // rest becomes a warning, and a search it took out comes back empty.
+        let errors = root["errors"] as? [[String: Any]] ?? []
+        if errors.contains(where: { $0["type"] as? String == "RATE_LIMITED" }) {
+            throw ParseError.rateLimited
+        }
+        let messages = errors.compactMap { $0["message"] as? String }
+        guard let payload = root["data"] as? [String: Any] else {
+            if let message = messages.first { throw ParseError.graphQL(message) }
+            throw ParseError.malformed("missing data")
+        }
+
+        guard let viewerObject = payload["viewer"] as? [String: Any],
+              let login = viewerObject["login"] as? String,
+              let avatar = viewerObject["avatarUrl"] as? String else {
+            throw ParseError.malformed("missing viewer")
+        }
+        let orgNodes = (viewerObject["organizations"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        let viewer = Viewer(
+            login: login,
+            name: viewerObject["name"] as? String,
+            avatarURL: avatar,
+            organizations: orgNodes.compactMap { $0["login"] as? String }
+        )
+
+        let social = self.social(from: viewerObject)
+
+        var truncated: Set<SectionKind> = []
+
+        func search(_ key: String, kind: ItemKind, section: SectionKind?, optional: Bool = false) throws -> [Item] {
+            guard let object = payload[key] as? [String: Any] else {
+                if !messages.isEmpty || optional { return [] }   // reported in `warnings`
+                throw ParseError.malformed("missing \(key)")
+            }
+            // A node GitHub could not resolve comes back as null; skip it, keep the rest.
+            let nodes = (object["nodes"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
+            // Exactly 100 results all fit; only more than that leaves some out.
+            if let section, let count = object["issueCount"] as? Int, count > searchLimit {
+                truncated.insert(section)
+            }
+            // A mixed search says per node what it is.
+            return nodes.compactMap { node in
+                let typed: ItemKind = switch node["__typename"] as? String {
+                case "Issue": .issue
+                case "PullRequest": .pullRequest
+                default: kind
+                }
+                return item(from: node, kind: typed)
+            }
+        }
+
+        let prs    = try search("prs",    kind: .pullRequest, section: .pullRequests)
+        let issues = try search("issues", kind: .issue,       section: .issues)
+        let assigned = try search("assignedIssues", kind: .issue, section: .issues)
+        var issueURLs = Set(issues.map(\.url))
+        let allIssues = issues + assigned.filter { issueURLs.insert($0.url).inserted }
+        let review = try search("review", kind: .pullRequest, section: .reviewRequested)
+        let changesRequested = try search(
+            "changesRequested",
+            kind: .pullRequest,
+            section: .changesRequested
+        )
+        let myPullRequests = try search(
+            "myPullRequests",
+            kind: .pullRequest,
+            section: .myPullRequests
+        )
+
+        // Newer searches: an older fixture or response without them still parses.
+        let mentions = try search("mentions", kind: .issue, section: .mentions, optional: true)
+        let merged = try search("merged", kind: .pullRequest, section: nil, optional: true)
+
+        guard let limitObject = payload["rateLimit"] as? [String: Any],
+              let limit = limitObject["limit"] as? Int,
+              let remaining = limitObject["remaining"] as? Int,
+              let resetString = limitObject["resetAt"] as? String,
+              let resetAt = parseDate(resetString) else {
+            throw ParseError.malformed("missing rateLimit")
+        }
+
+        return Snapshot(
+            viewer: viewer,
+            social: social,
+            prs: prs,
+            issues: allIssues,
+            review: review,
+            changesRequested: changesRequested,
+            myPullRequests: myPullRequests,
+            rateLimit: RateLimit(limit: limit, remaining: remaining, resetAt: resetAt),
+            truncated: truncated,
+            warnings: messages,
+            mentions: mentions,
+            merged: merged
+        )
+    }
+
+    // MARK: - Private
+
+    /// Sayaclar EKSIKSE hata atilmaz, sifira dusulur. Bunlar menunun sussu;
+    /// biri gelmedi diye bekleyen PR listesini kaybetmek orantisiz olurdu.
+    /// (Eski fixture'lar ve token kapsami dar hesaplar da boylece calisir.)
+    private static func social(from viewer: [String: Any]) -> Social {
+        func count(_ key: String) -> Int {
+            ((viewer[key] as? [String: Any])?["totalCount"] as? Int) ?? 0
+        }
+
+        let repositories = viewer["repositories"] as? [String: Any]
+        let nodes = repositories?["nodes"] as? [[String: Any]] ?? []
+        let stars = nodes.reduce(0) { $0 + (($1["stargazerCount"] as? Int) ?? 0) }
+        let total = repositories?["totalCount"] as? Int ?? nodes.count
+
+        return Social(
+            stars: stars,
+            followers: count("followers"),
+            following: count("following"),
+            starsAreExact: total <= nodes.count
+        )
+    }
+
+    /// Deger tipi bir bicimlendirici: ISO8601DateFormatter bir sinif ve Sendable
+    /// degil, bu yuzden Swift 6'da statik olarak tutulamiyor. ISO8601FormatStyle
+    /// bir struct ve paylasilan degisebilir durum tasimiyor.
+    private static let iso = Date.ISO8601FormatStyle()
+
+    private static func parseDate(_ string: String) -> Date? {
+        try? iso.parse(string)
+    }
+
+    /// commits(last: 1).nodes[0].commit.statusCheckRollup.state
+    private static func rollup(_ node: [String: Any]) -> String? {
+        let nodes = (node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]]
+        let commit = nodes?.first?["commit"] as? [String: Any]
+        return (commit?["statusCheckRollup"] as? [String: Any])?["state"] as? String
+    }
+
+    /// Yazari olmayan oge (silinmis hesap) nil doner ve listeden dusurulur:
+    /// kime ait oldugu belli olmayan bir satir gostermenin anlami yok.
+    private static func item(from node: [String: Any], kind: ItemKind) -> Item? {
+        guard let number = node["number"] as? Int,
+              let title = node["title"] as? String,
+              let url = node["url"] as? String,
+              let createdString = node["createdAt"] as? String,
+              let createdAt = parseDate(createdString),
+              let repositoryObject = node["repository"] as? [String: Any],
+              let repository = repositoryObject["nameWithOwner"] as? String,
+              let authorObject = node["author"] as? [String: Any],
+              let authorLogin = authorObject["login"] as? String
+        else { return nil }
+
+        // GitHub botlari iki bicimde gonderiyor: __typename "Bot", ya da login
+        // sonunda "[bot]". Ikisini de yakalamak gerekiyor.
+        let isBot = (authorObject["__typename"] as? String) == "Bot"
+            || authorLogin.hasSuffix("[bot]")
+        let commentAuthor = (((node["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first)?["author"]
+            as? [String: Any]
+        let commenter = commentAuthor?["login"] as? String
+
+        return Item(
+            kind: kind,
+            repository: repository,
+            number: number,
+            title: title,
+            url: url,
+            createdAt: createdAt,
+            isDraft: node["isDraft"] as? Bool ?? false,
+            authorLogin: authorLogin,
+            authorIsBot: isBot,
+            updatedAt: (node["updatedAt"] as? String).flatMap(parseDate),
+            reviewDecision: (node["reviewDecision"] as? String).flatMap(ReviewDecision.init(rawValue:)),
+            checks: rollup(node).flatMap(CheckState.init(rollup:)),
+            comments: ((node["comments"] as? [String: Any])?["totalCount"] as? Int) ?? 0,
+            lastCommenter: commenter,
+            lastCommenterIsBot: (commentAuthor?["__typename"] as? String) == "Bot" || commenter?.hasSuffix("[bot]") == true,
+            merge: MergeBlock(mergeable: node["mergeable"] as? String, state: node["mergeStateStatus"] as? String),
+            mergeUnknown: node["mergeable"] as? String == "UNKNOWN"
+        )
+    }
+}
