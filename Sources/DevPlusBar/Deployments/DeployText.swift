@@ -32,7 +32,7 @@ enum DeployText {
         return parts.joined(separator: " · ")
     }
 
-    /// "rbtaskiran@gmail.com" -> "rbtaskiran"
+    /// "jane.doe@example.com" -> "jane.doe"
     static func person(_ creator: String) -> String {
         creator.split(separator: "@").first.map(String.init) ?? creator
     }

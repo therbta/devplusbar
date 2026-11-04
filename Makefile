@@ -12,7 +12,7 @@
 #   make test       testler
 #   make clean
 
-VERSION     := 0.4.0
+VERSION     := 0.5.0
 APP         := DevPlusBar
 APP_DISPLAY := Dev+ Bar
 TARGET      := DevPlusBar
