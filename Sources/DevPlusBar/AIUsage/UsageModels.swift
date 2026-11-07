@@ -47,10 +47,21 @@ struct ClaudeLimitHit: Sendable, Hashable {
     let at: Date
 }
 
+/// The weekly percentage Anthropic reports for Claude, the number behind claude.ai's meter and
+/// /usage. Claude Code caches the latest one in ~/.claude.json (`cachedUsageUtilization`) each
+/// time it asks, so it is exact when fetched and goes stale between Claude Code's checks.
+struct ClaudeOfficialUsage: Sendable, Hashable {
+    /// 0…100.
+    let weeklyPercent: Double
+    let weeklyResetsAt: Date
+    let fetchedAt: Date
+}
+
 /// Everything the AI side draws.
 struct UsageSnapshot: Sendable {
     var records: [UsageRecord] = []
     var claudeHits: [ClaudeLimitHit] = []
     var codexLimits: CodexLimits?
+    var claudeOfficial: ClaudeOfficialUsage?
     var scannedAt: Date?
 }

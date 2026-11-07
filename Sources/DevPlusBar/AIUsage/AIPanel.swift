@@ -65,7 +65,7 @@ struct AIPanel: View {
                         breakdown("By model, 7 days", stats.week)
                         breakdown("Top projects, 7 days", stats.projects)
                     }
-                    Text("Read from ~/.claude and ~/.codex on this Mac. Nothing leaves it. Right-click for more.")
+                    Text("Read from ~/.claude, ~/.claude.json and ~/.codex on this Mac. Nothing leaves it. Right-click for more.")
                         .font(.system(size: 10)).foregroundStyle(Ink.tertiary)
                 }
                 .padding(16)
@@ -237,22 +237,17 @@ struct AIPanel: View {
                     if let note = limits.mixNote(weekRecords: claude.filter { week?.contains($0.date) ?? false }) {
                         Text(note).font(.system(size: 10)).foregroundStyle(Ink.warning)
                     }
-                    Text(limits.calibratedAt != nil && limits.weeklyLearnedAt == limits.calibratedAt
-                         ? "Matched to claude.ai's \(limits.calibratedPercent ?? 0)% \(Self.day(limits.calibratedAt))"
-                         : limits.weeklyCapIsFloor == true
-                         ? "Cap is at least \(UsageStats.compact(limits.weeklyCap ?? 0)): you went past the learned one without being stopped"
-                         : limits.weeklyCap != nil
-                         ? "Cap learned from your limit hit \(Self.day(limits.weeklyLearnedAt)) · reset time official"
-                         : (week != nil ? "Reset time official; the cap is learned at your next weekly limit"
-                                        : "Learns your cap and reset time the first time the weekly limit stops you"))
-                        .font(.system(size: 10)).foregroundStyle(limits.weeklyCap != nil ? Ink.tertiary : Ink.tertiary)
+                    Text(limits.weeklySource(now: now)
+                         ?? (week != nil ? "Reset time official; the cap is learned at your next weekly limit"
+                                         : "Learns your cap and reset time from Claude Code's next usage check or weekly limit"))
+                        .font(.system(size: 10)).foregroundStyle(Ink.tertiary)
                     Button("Not what claude.ai says? Match it…") { Self.askOfficialPercent(monitor) }
                         .buttonStyle(.link).font(.system(size: 10))
                 }
                 Spacer(minLength: 0)
             }
         }
-        .help("Claude's limits are not published. When a limit stops you, Claude Code logs which one and when it resets; Dev+ Bar learns the cap from the tokens you had used by then.")
+        .help("Claude Code caches the weekly percentage Anthropic reports each time it checks your usage. Dev+ Bar reads it from ~/.claude.json, fits the cap to it, and counts on with the tokens logged since. Nothing is sent anywhere.")
     }
 
     /// The weekly meter: exact week boundaries once a weekly reset has been seen.
@@ -278,9 +273,7 @@ struct AIPanel: View {
                     }
                 }
                 .frame(height: 6)
-                Text(limits.weeklyCapIsFloor == true ? "cap is at least this: you went past the learned one without being stopped"
-                     : limits.weeklyCap != nil ? "cap learned from your weekly limit hit \(Self.day(limits.weeklyLearnedAt)); reset time is official"
-                                              : "reset time is official; the cap is learned the next time the weekly limit stops you")
+                Text(limits.weeklySource(now: now) ?? "reset time is official; the cap is learned the next time the weekly limit stops you")
                     .font(.system(size: 10)).foregroundStyle(limits.weeklyCap != nil ? Ink.green : Ink.tertiary)
             }
         } else {

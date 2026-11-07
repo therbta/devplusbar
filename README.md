@@ -84,8 +84,10 @@ Dev+ Bar only runs `git status`, `lsof` and `ps` for this. It never fetches, and
 your local repositories leaves the Mac.
 
 If you use Claude Code or Codex, the **AI Usage** side reads their local session logs and
-shows how much of your limit you've used. It warns you at 75% and 90% of the weekly limit, and
-when your current pace would run out before the reset.
+shows how much of your limit you've used. For Claude it starts from the weekly percentage Claude
+Code last fetched from Anthropic (cached in `~/.claude.json`), so it reads what claude.ai reads.
+It warns you at 75% and 90% of the weekly limit, and when your current pace would run out before
+the reset.
 
 ## Notifications
 

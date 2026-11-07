@@ -13,12 +13,16 @@ final class UsageScanner: @unchecked Sendable {
     private var codexLimits: CodexLimits?
     /// By kind and reset time; the earliest moment it stopped you.
     private var hits: [String: ClaudeLimitHit] = [:]
+    private var claudeOfficial: ClaudeOfficialUsage?
+    private var claudeConfigModified: Date?
     private let claudeRoot: URL
     private let codexRoot: URL
+    private let claudeConfig: URL
 
     init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         claudeRoot = home.appendingPathComponent(".claude/projects")
         codexRoot = home.appendingPathComponent(".codex/sessions")
+        claudeConfig = home.appendingPathComponent(".claude.json")
     }
 
     func scan(now: Date = Date()) -> UsageSnapshot {
@@ -27,9 +31,21 @@ final class UsageScanner: @unchecked Sendable {
         for file in Self.logs(under: claudeRoot, since: cutoff) { read(file, tool: .claude) }
         for file in Self.logs(under: codexRoot, since: cutoff) { read(file, tool: .codex) }
         records = records.filter { $0.value.date >= cutoff }
+        readClaudeConfig()
         return UsageSnapshot(records: records.values.sorted { $0.date < $1.date },
                              claudeHits: hits.values.sorted { $0.at < $1.at },
-                             codexLimits: codexLimits, scannedAt: now)
+                             codexLimits: codexLimits, claudeOfficial: claudeOfficial, scannedAt: now)
+    }
+
+    /// The official weekly percentage, reread when Claude Code has rewritten its config.
+    private func readClaudeConfig() {
+        let modified = (try? claudeConfig.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        guard let modified, modified != claudeConfigModified else { return }
+        // A file caught mid-write does not parse; leave the date so the next scan tries again.
+        guard let data = try? Data(contentsOf: claudeConfig),
+              let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        claudeConfigModified = modified
+        claudeOfficial = UsageParser.claudeOfficial(config)
     }
 
     private static let assistantMarker = Data(#""type":"assistant""#.utf8)

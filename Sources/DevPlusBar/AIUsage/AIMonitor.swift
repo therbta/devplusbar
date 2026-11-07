@@ -93,6 +93,8 @@ final class AIMonitor: ObservableObject {
             let week = await Task.detached(priority: .utility) { UsageScanner.claudeRecords(from: start, to: hit.at) }.value
             next = next.learningWeekly(from: hit, weekRecords: week)
         }
+        // The official percentage, when Claude Code has checked since the last hit or match.
+        if let official = fresh.claudeOfficial { next = next.adopting(official, records: fresh.records) }
         if let week = next.currentWeek(now: Date()) {
             let used = fresh.records.filter { $0.tool == .claude && week.contains($0.date) }.reduce(0) { $0 + $1.tokens }
             next = next.raisingFloor(used: used, stopped: ClaudeLimits.active(fresh.claudeHits, now: Date()) != nil)

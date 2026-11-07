@@ -25,6 +25,8 @@ struct ClaudeLimits: Sendable, Equatable, Codable {
     /// When the cap was set from the percentage claude.ai showed, and that percentage.
     var calibratedAt: Date? = nil
     var calibratedPercent: Int? = nil
+    /// The percentage came from Claude Code's cached /usage reading, not typed in.
+    var calibratedByClaudeCode: Bool? = nil
 
     static let week: TimeInterval = 7 * 86_400
 
@@ -92,16 +94,58 @@ struct ClaudeLimits: Sendable, Equatable, Codable {
     /// The cap that makes this week's tokens read as the percentage claude.ai shows. The official
     /// number is the truth: a cap learned from a limit hit only counts tokens logged on this Mac.
     func calibrating(used: Int, percent: Int, weekRecords: [UsageRecord], now: Date = Date()) -> ClaudeLimits {
-        guard used > 0, (1...100).contains(percent) else { return self }
+        fitted(used: used, percent: Double(percent), weekRecords: weekRecords, at: now, byClaudeCode: false)
+    }
+
+    /// Fits the cap to the official percentage Claude Code last fetched, so the meter reads exactly
+    /// that at the moment it was fetched and counts on from there with the tokens logged since.
+    /// A fixed cap drifts (one fitted to 49% read 98% when claude.ai said 83%), so every newer
+    /// reading refits it. The newest source wins: a later hit or match beats an older reading.
+    func adopting(_ official: ClaudeOfficialUsage, records: [UsageRecord], now: Date = Date()) -> ClaudeLimits {
         var next = self
-        next.weeklyCap = Int((Double(used) / (Double(percent) / 100)).rounded())
+        let current = official.weeklyResetsAt > now
+        // The reset time is official either way; a past one still fixes the weekday and hour.
+        if current || weekAnchor == nil { next.weekAnchor = official.weeklyResetsAt }
+        let newest = [weeklyLearnedAt, calibratedAt, ignoreBefore].compactMap { $0 }.max() ?? .distantPast
+        // Anthropic reports whole percents: "2%" is anywhere from 1.5 to 2.5, a cap off by a quarter
+        // that would under-read all week. Early readings keep last week's cap (same plan).
+        guard current, official.fetchedAt > newest, official.weeklyPercent >= 10 || weeklyCap == nil else { return next }
+        let start = official.weeklyResetsAt.addingTimeInterval(-Self.week)
+        let week = records.filter { $0.tool == .claude && $0.date >= start && $0.date <= official.fetchedAt }
+        return next.fitted(used: week.reduce(0) { $0 + $1.tokens }, percent: official.weeklyPercent,
+                           weekRecords: week, at: official.fetchedAt, byClaudeCode: true)
+    }
+
+    private func fitted(used: Int, percent: Double, weekRecords: [UsageRecord], at: Date, byClaudeCode: Bool) -> ClaudeLimits {
+        guard used > 0, percent >= 1, percent <= 100 else { return self }
+        var next = self
+        next.weeklyCap = Int((Double(used) / (percent / 100)).rounded())
         next.weeklyCapIsFloor = false
         // Later than any hit already in the logs, so an older hit does not undo it; a new hit will.
-        next.weeklyLearnedAt = now
-        next.calibratedAt = now
-        next.calibratedPercent = percent
+        next.weeklyLearnedAt = at
+        next.calibratedAt = at
+        next.calibratedPercent = Int(percent.rounded())
+        next.calibratedByClaudeCode = byClaudeCode ? true : nil
         next.mixAtLearn = Self.mix(weekRecords)
         return next
+    }
+
+    /// Where the weekly cap came from, for the line under the meter.
+    func weeklySource(now: Date = Date()) -> String? {
+        guard let cap = weeklyCap else { return nil }
+        // Raised past whatever set it: that came last.
+        if weeklyCapIsFloor == true {
+            return "Cap is at least \(UsageStats.compact(cap)): you went past the learned one without being stopped"
+        }
+        if let at = calibratedAt, weeklyLearnedAt == at {
+            let when = Calendar.current.isDate(at, inSameDayAs: now)
+                ? "at \(at.formatted(date: .omitted, time: .shortened))"
+                : "on \(at.formatted(.dateTime.month(.abbreviated).day()))"
+            return calibratedByClaudeCode == true
+                ? "Official \(calibratedPercent ?? 0)% \(when), from Claude Code's last usage check; counted on since"
+                : "Matched to claude.ai's \(calibratedPercent ?? 0)% \(when)"
+        }
+        return "Cap learned from your limit hit \(weeklyLearnedAt.map { "on " + $0.formatted(.dateTime.month(.abbreviated).day()) } ?? "") · reset time official"
     }
 
     /// When the week runs out at the pace of the week so far, the way claude.ai predicts it;

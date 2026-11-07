@@ -232,6 +232,82 @@ struct ClaudePaceTests {
         #expect(limits.calibrating(used: 10, percent: 0, weekRecords: []) == limits)
     }
 
+    /// ~/.claude.json on 2026-11-06, trimmed: Claude Code's cache of Anthropic's /usage answer.
+    static let config = #"{"oauthAccount":{"accountUuid":"acc-1"},"cachedUsageUtilization":{"fetchedAtMs":1794009850041,"accountUuid":"acc-1","utilization":{"five_hour":null,"seven_day":{"utilization":80,"resets_at":"2026-11-07T02:00:00.032879+00:00","limit_dollars":null},"seven_day_opus":null,"limits":[{"kind":"weekly_all","group":"weekly","percent":80,"severity":"warning","resets_at":"2026-11-07T02:00:00.032879+00:00","scope":null,"is_active":true}]}}}"#
+
+    @Test func readsClaudeCodesCachedUsage() throws {
+        let reading = try #require(UsageParser.claudeOfficial(json(Self.config)))
+        #expect(reading.weeklyPercent == 80)
+        #expect(reading.weeklyResetsAt == Date(timeIntervalSince1970: 1_793_412_000 + 7 * 86_400))
+        #expect(reading.fetchedAt == Date(timeIntervalSince1970: 1_794_009_850.041))
+        // Another account's cache is not yours.
+        #expect(UsageParser.claudeOfficial(json(Self.config.replacingOccurrences(of: #""accountUuid":"acc-1"}"#, with: #""accountUuid":"acc-2"}"#))) == nil)
+        // Without `seven_day`, the `limits` list says the same.
+        let limitsOnly = try #require(UsageParser.claudeOfficial(json(Self.config.replacingOccurrences(
+            of: #""seven_day":{"utilization":80,"resets_at":"2026-11-07T02:00:00.032879+00:00","limit_dollars":null}"#, with: #""seven_day":null"#))))
+        #expect(limitsOnly.weeklyPercent == 80)
+        #expect(UsageParser.claudeOfficial(json(#"{"numStartups":3}"#)) == nil)
+    }
+
+    /// The drift this fixes: matched to 49% on Nov 2, the meter read 98% when claude.ai said 83%.
+    @Test func eachOfficialReadingRefitsTheCap() {
+        let reset = Date(timeIntervalSince1970: 1_793_412_000 + 7 * 86_400)
+        let start = reset.addingTimeInterval(-ClaudeLimits.week)
+        let fetched = reset.addingTimeInterval(-2 * 3600)
+        let records = [r(start.addingTimeInterval(3600), 44_640_000), r(fetched.addingTimeInterval(-60), 39_430_000),
+                       r(fetched.addingTimeInterval(1800), 5_000_000)]   // after the reading: counted on
+        var matched = ClaudeLimits(weekAnchor: start)
+        matched = matched.calibrating(used: 44_640_000, percent: 49, weekRecords: [], now: start.addingTimeInterval(3 * 86_400))
+        let reading = ClaudeOfficialUsage(weeklyPercent: 80, weeklyResetsAt: reset, fetchedAt: fetched)
+        let now = fetched.addingTimeInterval(3600)
+        let next = matched.adopting(reading, records: records, now: now)
+        #expect(next.weeklyCap == 105_087_500)
+        #expect(next.calibratedByClaudeCode == true)
+        #expect(next.weekAnchor == reset)
+        let used = records.reduce(0) { $0 + $1.tokens }
+        #expect(Int((Double(used) / Double(next.weeklyCap!) * 100).rounded()) == 85)   // was 98 against the old cap
+        #expect(next.weeklySource(now: now)?.hasPrefix("Official 80%") == true)
+        // Read again each minute: nothing changes.
+        #expect(next.adopting(reading, records: records, now: now) == next)
+    }
+
+    @Test func theNewestSourceWins() {
+        let reset = Date(timeIntervalSince1970: 3_000_000)
+        let records = [r(reset.addingTimeInterval(-86_400), 1000)]
+        let old = ClaudeOfficialUsage(weeklyPercent: 10, weeklyResetsAt: reset, fetchedAt: reset.addingTimeInterval(-3600))
+        let now = reset.addingTimeInterval(-60)
+        // A match typed after the reading holds until Claude Code checks again.
+        let typed = ClaudeLimits().calibrating(used: 1000, percent: 20, weekRecords: [], now: reset.addingTimeInterval(-1800))
+        #expect(typed.adopting(old, records: records, now: now).weeklyCap == 5000)
+        let newer = ClaudeOfficialUsage(weeklyPercent: 25, weeklyResetsAt: reset, fetchedAt: reset.addingTimeInterval(-600))
+        #expect(typed.adopting(newer, records: records, now: now).weeklyCap == 4000)
+        // Last week's reading fixes the boundary but says nothing about this week's share.
+        let stale = ClaudeLimits().adopting(old, records: records, now: reset.addingTimeInterval(60))
+        #expect(stale.weeklyCap == nil)
+        #expect(stale.currentWeek(now: reset.addingTimeInterval(60))?.start == reset)
+        // A whole-percent reading early in the week is too coarse to replace a cap; with none, it is a start.
+        let early = ClaudeOfficialUsage(weeklyPercent: 2, weeklyResetsAt: reset, fetchedAt: reset.addingTimeInterval(-600))
+        #expect(typed.adopting(early, records: records, now: now).weeklyCap == 5000)
+        #expect(ClaudeLimits().adopting(early, records: records, now: now).weeklyCap == 50_000)
+        // After "Forget learned limits", a reading from before is the old plan's.
+        #expect(ClaudeLimits(ignoreBefore: reset.addingTimeInterval(-1800)).adopting(old, records: records, now: now).weeklyCap == nil)
+    }
+
+    @Test func scannerPicksUpTheReading() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let scanner = UsageScanner(home: home)
+        #expect(scanner.scan().claudeOfficial == nil)
+        try Self.config.write(to: home.appendingPathComponent(".claude.json"), atomically: true, encoding: .utf8)
+        #expect(scanner.scan().claudeOfficial?.weeklyPercent == 80)
+    }
+
+    private func r(_ date: Date, _ tokens: Int) -> UsageRecord {
+        UsageRecord(id: UUID().uuidString, tool: .claude, model: "claude-opus-5-5", project: "p", date: date,
+                    input: tokens, output: 0, cacheWrite: 0, cacheRead: 0)
+    }
+
     @Test func smallHoursBelongToTheNightBefore() {
         var parts = DateComponents(); parts.year = 2026; parts.month = 11; parts.day = 6; parts.hour = 2
         #expect(ClaudeLimits.dayPart(Calendar.current.date(from: parts)!) == "Thursday night")

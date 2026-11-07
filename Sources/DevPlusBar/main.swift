@@ -42,6 +42,14 @@ if CommandLine.arguments.contains("--usage-report") {
     let limits = ClaudeLimits().learning(from: snapshot.claudeHits, records: snapshot.records)
     print("hits", snapshot.claudeHits.map { "\($0.kind.rawValue) at \($0.at) resets \($0.resetsAt)" })
     print("learned 5h", limits.fiveHourCap ?? -1, "week", limits.weeklyCap ?? -1, "week now", limits.currentWeek(now: Date()).map { "\($0.start)–\($0.end)" } ?? "-")
+    if let o = snapshot.claudeOfficial {
+        print("official week \(o.weeklyPercent)% fetched \(o.fetchedAt) resets \(o.weeklyResetsAt)")
+        let adopted = limits.adopting(o, records: snapshot.records)
+        if let cap = adopted.weeklyCap, let week = adopted.currentWeek(now: Date()) {
+            let used = snapshot.records.filter { $0.tool == .claude && week.contains($0.date) }.reduce(0) { $0 + $1.tokens }
+            print("meter \(UsageStats.compact(used)) of \(UsageStats.compact(cap)) = \(String(format: "%.1f", Double(used) / Double(cap) * 100))% ·", adopted.weeklySource() ?? "")
+        }
+    }
     if let l = snapshot.codexLimits { print("codex", l.plan ?? "", l.primary.map { "\($0.usedPercent)% resets \($0.resetsAt)" } ?? "", l.secondary.map { "week \($0.usedPercent)%" } ?? "") }
     exit(0)
 }

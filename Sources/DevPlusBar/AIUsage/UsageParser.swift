@@ -106,6 +106,32 @@ enum UsageParser {
         return ClaudeLimitHit(kind: kind, resetsAt: Date(timeIntervalSince1970: reset), at: at)
     }
 
+    /// The weekly utilization Claude Code cached from Anthropic, read from ~/.claude.json.
+    static func claudeOfficial(_ config: [String: Any]) -> ClaudeOfficialUsage? {
+        guard let cache = config["cachedUsageUtilization"] as? [String: Any],
+              let fetchedMs = cache["fetchedAtMs"] as? Double,
+              let utilization = cache["utilization"] as? [String: Any] else { return nil }
+        // Claude Code drops a cache that belongs to another account, and so does this.
+        if let owner = cache["accountUuid"] as? String,
+           let current = (config["oauthAccount"] as? [String: Any])?["accountUuid"] as? String,
+           owner != current { return nil }
+        let week = utilization["seven_day"] as? [String: Any]
+        let all = (utilization["limits"] as? [[String: Any]])?.first { $0["kind"] as? String == "weekly_all" }
+        guard let percent = week?["utilization"] as? Double ?? all?["percent"] as? Double,
+              let reset = isoDate(week?["resets_at"]) ?? isoDate(all?["resets_at"]) else { return nil }
+        // Whole seconds: the API adds microseconds, which would move the stored week each read.
+        return ClaudeOfficialUsage(weeklyPercent: percent,
+                                   weeklyResetsAt: Date(timeIntervalSince1970: reset.timeIntervalSince1970.rounded()),
+                                   fetchedAt: Date(timeIntervalSince1970: fetchedMs / 1000))
+    }
+
+    /// Like `date(_:)`, also for the six fractional digits Anthropic's API writes.
+    static func isoDate(_ value: Any?) -> Date? {
+        guard let s = value as? String else { return nil }
+        if let d = date(s) { return d }
+        return date(s.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression))
+    }
+
     /// Per-file state while reading a Codex log: the session's folder and the current model.
     struct CodexContext: Sendable {
         var project = "—"
